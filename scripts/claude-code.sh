@@ -6,6 +6,25 @@ CONFIG="$CLAUDE_DIR/devcontainer.json"
 
 # Create directories
 mkdir -p "$HOME/.claude/commands"
+mkdir -p "$HOME/.claude/hooks"
+
+# Symlink settings.json from clanker repo
+if [ ! -e "$HOME/.claude/settings.json" ]; then
+    ln -s "$HOME/.claude/clanker/config/settings.json" "$HOME/.claude/settings.json"
+    echo "Created settings.json symlink"
+elif [ ! -L "$HOME/.claude/settings.json" ]; then
+    echo "Warning: ~/.claude/settings.json exists but is not a symlink"
+    echo "Consider backing it up and removing it to use clanker's settings"
+fi
+
+# Symlink hook scripts from clanker repo
+for hook in "$HOME/.claude/clanker/hooks"/*.sh; do
+    hook_name=$(basename "$hook")
+    if [ ! -e "$HOME/.claude/hooks/$hook_name" ]; then
+        ln -s "$hook" "$HOME/.claude/hooks/$hook_name"
+        echo "Created hook symlink: $hook_name"
+    fi
+done
 
 # Download devcontainer files if missing
 if [ ! -f "$CONFIG" ]; then

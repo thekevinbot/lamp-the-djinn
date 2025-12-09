@@ -40,16 +40,34 @@ bash <(curl -s https://raw.githubusercontent.com/clankerbot/clanker/main/scripts
 ## Directory Structure
 
 ```
-~/.claude/clanker/
-├── scripts/                                  # Executable scripts
-│   ├── claude-code.sh                       # Setup script
-│   ├── save-context.sh                      # Context save helper
-│   └── run-tests.sh                         # Test runner
-├── tests/                                    # Test suite
-├── records/                                  # Context storage (NOT in git)
-│   ├── <folder-name>-latest.md             # Current context
-│   └── <folder-name>-YYYY-MM-DD_HH-MM-SS.md # Backups
-└── README.md                                 # This file
+~/.claude/
+├── settings.json -> clanker/config/settings.json  # Symlink to repo
+├── hooks/                                         # Hook scripts (symlinked)
+│   ├── load-context.sh -> clanker/hooks/...
+│   └── webfetch-fallback.sh -> clanker/hooks/...
+└── clanker/                                       # This repo
+    ├── config/
+    │   └── settings.json                         # Hook configuration (tracked in git)
+    ├── hooks/                                     # Hook scripts (tracked in git)
+    │   ├── load-context.sh
+    │   └── webfetch-fallback.sh
+    ├── scripts/
+    │   ├── claude-code.sh                        # Setup script
+    │   ├── save-context.sh                       # Context save helper
+    │   ├── run-tests.sh                          # Test runner
+    │   └── test-container.sh                     # Integration test
+    ├── skills/
+    │   ├── web.ts                                # Playwright browser automation
+    │   └── README.md
+    ├── tests/                                     # Test suite (7 tests)
+    ├── records/                                   # Context storage (NOT in git)
+    │   ├── project-a/
+    │   │   ├── latest.md
+    │   │   └── 2025-12-09_14-30.md
+    │   └── project-b/
+    │       ├── latest.md
+    │       └── 2025-12-09_15-00.md
+    └── README.md
 ```
 
 ## Usage
@@ -157,6 +175,29 @@ Auto-save is triggered by instructions in `~/.claude/CLAUDE.md` that tell Claude
 - Save periodically (~30 minutes)
 
 Claude reads these instructions via the hook and follows them.
+
+### Playwright Fallback for WebFetch
+
+When WebFetch fails (blocked sites, paywalls, etc.), Clanker automatically retries with Playwright.
+
+**How it works:**
+- PostToolUse hook monitors WebFetch results
+- On failure, automatically fetches with Playwright
+- Injects Playwright result as additional context
+- Claude can use the Playwright content instead
+
+**Hook Configuration:**
+- Location: `~/.claude/settings.json` → `PostToolUse` → `WebFetch`
+- Script: `~/.claude/hooks/webfetch-fallback.sh`
+
+**Example:**
+```
+User: "Summarize https://www.nytimes.com/..."
+1. Claude tries WebFetch → Fails (blocked)
+2. Hook catches failure → Runs Playwright
+3. Playwright gets content → Added to context
+4. Claude uses Playwright result to answer
+```
 
 ## Troubleshooting
 

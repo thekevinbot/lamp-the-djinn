@@ -4,16 +4,16 @@
 
 FOLDER_NAME=$(basename "$PWD")
 TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
-RECORDS_DIR="$HOME/.claude/clanker/records"
+RECORDS_DIR="$HOME/.claude/clanker/records/$FOLDER_NAME"
 
 mkdir -p "$RECORDS_DIR"
 
 # Save as latest
-cp "$1" "$RECORDS_DIR/${FOLDER_NAME}-latest.md"
+cp "$1" "$RECORDS_DIR/latest.md"
 
 # Save timestamped backup
-cp "$1" "$RECORDS_DIR/${FOLDER_NAME}-${TIMESTAMP}.md"
+cp "$1" "$RECORDS_DIR/${TIMESTAMP}.md"
 
 echo "Context saved to:"
-echo "  - $RECORDS_DIR/${FOLDER_NAME}-latest.md"
-echo "  - $RECORDS_DIR/${FOLDER_NAME}-${TIMESTAMP}.md"
+echo "  - $RECORDS_DIR/latest.md"
+echo "  - $RECORDS_DIR/${TIMESTAMP}.md"

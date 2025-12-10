@@ -45,6 +45,6 @@
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace",
-  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh",
+  "postStartCommand": "ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null; sudo /usr/local/bin/init-firewall.sh",
   "waitFor": "postStartCommand"
 }

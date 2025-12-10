@@ -8,7 +8,9 @@ ARG CLAUDE_CODE_VERSION=latest
 
 # Install basic development tools and iptables/ipset
 # Note: Playwright image is Ubuntu-based, so we use apt-get
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+  --mount=type=cache,target=/var/lib/apt,sharing=locked \
+  apt-get update && apt-get install -y --no-install-recommends \
   less \
   git \
   procps \
@@ -29,8 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   vim \
   openssh-client \
   wget \
-  ca-certificates \
-  && apt-get clean && rm -rf /var/lib/apt/lists/*
+  ca-certificates
 
 # Install Docker CLI only (not full Docker engine) - much faster than get.docker.com
 ARG DOCKER_VERSION=27.3.1
@@ -50,31 +51,29 @@ COPY init-firewall.sh add-domain-to-firewall.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/add-domain-to-firewall.sh
 
 # Install Claude Code globally as root (simpler, avoids permission issues)
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+  npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
 # Rename existing 'ubuntu' user (UID 1000) to 'node' for devcontainer compatibility
 # The Playwright image comes with 'ubuntu' user at UID 1000, we need 'node' for our devcontainer.json
+# Also set up command history, workspace, and config directories in one layer
 RUN usermod -l node -d /home/node -m ubuntu && \
   groupmod -n node ubuntu && \
   chsh -s /bin/zsh node && \
   echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh, /usr/local/bin/add-domain-to-firewall.sh" > /etc/sudoers.d/node-firewall && \
   chmod 0440 /etc/sudoers.d/node-firewall && \
-  usermod -aG docker node 2>/dev/null || groupadd docker && usermod -aG docker node || true
-
-# Persist bash history
-RUN mkdir /commandhistory && \
+  (usermod -aG docker node 2>/dev/null || groupadd docker && usermod -aG docker node || true) && \
+  mkdir /commandhistory && \
   touch /commandhistory/.bash_history && \
-  chown -R node /commandhistory
+  chown -R node /commandhistory && \
+  mkdir -p /workspace /home/node/.claude && \
+  chown -R node:node /workspace /home/node/.claude /home/node
 
 # Set environment variables
 ENV DEVCONTAINER=true
 ENV SHELL=/bin/zsh
 ENV EDITOR=nano
 ENV VISUAL=nano
-
-# Create workspace and config directories
-RUN mkdir -p /workspace /home/node/.claude && \
-  chown -R node:node /workspace /home/node/.claude /home/node
 
 WORKDIR /workspace
 
@@ -91,8 +90,5 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
   -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
   -x
 
-# Set up SSH for GitHub access
-RUN mkdir -p ~/.ssh && \
-  chmod 700 ~/.ssh && \
-  ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null && \
-  chmod 644 ~/.ssh/known_hosts
+# Set up SSH directory (ssh-keyscan moved to postStartCommand for freshness)
+RUN mkdir -p ~/.ssh && chmod 700 ~/.ssh

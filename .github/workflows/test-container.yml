@@ -56,6 +56,10 @@ jobs:
       - name: Test - docker CLI is installed
         run: docker run --rm clanker-test:latest docker --version
 
+      - name: Test - docker socket access works
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock clanker-test:latest docker ps
+
       - name: Test - firewall scripts exist
         run: |
           docker run --rm clanker-test:latest ls -la /usr/local/bin/init-firewall.sh

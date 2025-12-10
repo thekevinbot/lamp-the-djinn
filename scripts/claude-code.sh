@@ -127,12 +127,9 @@ elif [ "$REMOTE_COMMIT" != "$LOCAL_COMMIT" ]; then
     download_devcontainer_files
     echo "$REMOTE_COMMIT" > "$VERSION_FILE"
 
-    # Pull latest image and remove old containers
+    # Pull latest image (old containers are left running)
     echo "Pulling latest Docker image..."
     docker pull "$IMAGE_NAME"
-
-    echo "Removing old containers..."
-    docker rm -f $(docker ps -aq --filter "label=devcontainer.config_file=$CONFIG") 2>/dev/null || true
 fi
 
 # Replace .claude docker volume with bind mount

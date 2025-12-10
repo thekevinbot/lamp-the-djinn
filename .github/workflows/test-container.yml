@@ -1,0 +1,74 @@
+name: Test Container
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.devcontainer/**'
+      - '.github/workflows/test-container.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.devcontainer/**'
+      - '.github/workflows/test-container.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .devcontainer
+          file: .devcontainer/Dockerfile
+          load: true
+          tags: clanker-test:latest
+
+      - name: Test - uv is installed
+        run: docker run --rm clanker-test:latest uv --version
+
+      - name: Test - uvx is installed
+        run: docker run --rm clanker-test:latest uvx --version
+
+      - name: Test - pnpm is installed
+        run: docker run --rm clanker-test:latest pnpm --version
+
+      - name: Test - npm is installed
+        run: docker run --rm clanker-test:latest npm --version
+
+      - name: Test - node is installed
+        run: docker run --rm clanker-test:latest node --version
+
+      - name: Test - claude is installed
+        run: docker run --rm clanker-test:latest claude --version
+
+      - name: Test - git is installed
+        run: docker run --rm clanker-test:latest git --version
+
+      - name: Test - docker CLI is installed
+        run: docker run --rm clanker-test:latest docker --version
+
+      - name: Test - firewall scripts exist
+        run: |
+          docker run --rm clanker-test:latest ls -la /usr/local/bin/init-firewall.sh
+          docker run --rm clanker-test:latest ls -la /usr/local/bin/add-domain-to-firewall.sh
+          docker run --rm clanker-test:latest ls -la /usr/local/bin/safe-rm
+
+      - name: Test - whitelisted domains file exists
+        run: docker run --rm clanker-test:latest cat /usr/local/share/whitelisted-domains.txt | head -20
+
+      - name: Test - runs as non-root user
+        run: |
+          USER=$(docker run --rm clanker-test:latest whoami)
+          if [ "$USER" != "node" ]; then
+            echo "Expected user 'node', got '$USER'"
+            exit 1
+          fi

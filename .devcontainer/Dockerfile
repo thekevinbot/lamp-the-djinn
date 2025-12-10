@@ -33,15 +33,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   wget \
   ca-certificates
 
-# Install Docker CLI and git-delta in one layer
+# Install Docker CLI and git-delta in one layer (parallel downloads)
 ARG DOCKER_VERSION=27.3.1
 ARG GIT_DELTA_VERSION=0.18.2
 RUN ARCH=$(dpkg --print-architecture) && \
-  curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/docker-${DOCKER_VERSION}.tgz" | \
-  tar xz --strip-components=1 -C /usr/local/bin docker/docker && \
-  wget -q "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
-  dpkg -i "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
-  rm "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb"
+  curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/docker-${DOCKER_VERSION}.tgz" -o /tmp/docker.tgz & \
+  wget -q "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" -O /tmp/git-delta.deb & \
+  wait && \
+  tar xzf /tmp/docker.tgz --strip-components=1 -C /usr/local/bin docker/docker && \
+  dpkg -i /tmp/git-delta.deb && \
+  rm /tmp/docker.tgz /tmp/git-delta.deb
 
 # Copy firewall scripts early (rarely change, good for caching)
 COPY --chmod=755 init-firewall.sh add-domain-to-firewall.sh /usr/local/bin/

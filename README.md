@@ -32,10 +32,12 @@ After running the setup script:
 
 ```
 ~/.claude/
-└── .devcontainer/           # Docker configuration (downloaded by setup script)
-    ├── devcontainer.json
-    ├── Dockerfile
-    └── init-firewall.sh
+├── .devcontainer/           # Docker configuration (downloaded by setup script)
+│   ├── devcontainer.json
+│   ├── Dockerfile
+│   ├── init-firewall.sh
+│   └── add-domain-to-firewall.sh
+└── .allowed-browser-domains # Approved domains for browser automation
 ```
 
 Clean and minimal - just the devcontainer config.
@@ -55,6 +57,7 @@ Browser automation plugin:
 - `/browse [url]` - Automate browser with Playwright
 - Automatic WebFetch fallback hook
 - Handles JavaScript-heavy sites
+- Uses domain approval system (see below)
 
 ## Installation
 
@@ -143,6 +146,37 @@ Plugins use the Claude Code plugin system:
 - Scripts in `scripts/` directory
 
 Clanker provides the infrastructure; plugins provide the functionality.
+
+### Domain Approval System
+
+The container runs a firewall that blocks external URLs by default. Browser automation plugins must get user approval before accessing new domains.
+
+**How it works:**
+1. Plugin calls `approve-domain.sh <domain>` before navigating
+2. If domain is new, user is prompted: `Allow access to example.com? [y/N]`
+3. If approved, domain is added to `~/.claude/.allowed-browser-domains` and firewall is updated
+4. Subsequent requests to the same domain are auto-approved
+
+**Usage from plugins:**
+
+```bash
+# Check and prompt for approval (interactive)
+scripts/approve-domain.sh example.com
+
+# Check only, no prompt (for pre-flight checks)
+scripts/approve-domain.sh example.com --check-only
+```
+
+**Exit codes:**
+- `0` - Domain is approved
+- `1` - Domain was denied or error
+- `2` - Invalid usage
+
+**Environment variables:**
+- `ALLOWED_DOMAINS_FILE` - Override storage location (default: `~/.claude/.allowed-browser-domains`)
+
+**Container-level scripts:**
+- `/usr/local/bin/add-domain-to-firewall.sh <domain>` - Resolves domain and adds IPs to firewall ipset (requires sudo, called automatically by approve-domain.sh)
 
 ## Setup on New Machine
 

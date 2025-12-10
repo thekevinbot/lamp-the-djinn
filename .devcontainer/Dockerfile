@@ -31,6 +31,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Playwright dependencies
 RUN npx playwright install-deps
 
+# Install Docker CLI (for managing host Docker from container)
+RUN curl -fsSL https://get.docker.com | sh && \
+  usermod -aG docker node
+
 # Ensure default node user has access to /usr/local/share
 RUN mkdir -p /usr/local/share/npm-global && \
   chown -R node:node /usr/local/share

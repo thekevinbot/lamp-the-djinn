@@ -1,4 +1,4 @@
-# Use Playwright base image which includes Node.js 20, Chromium, and all browser dependencies
+# Use Playwright base image which includes Node.js, Chromium, and all browser dependencies pre-installed
 FROM mcr.microsoft.com/playwright:v1.57.0-noble
 
 ARG TZ
@@ -52,11 +52,14 @@ RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/add-domain-to-firewa
 # Install Claude Code globally as root (simpler, avoids permission issues)
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
-# Create non-root user 'node' (Playwright image uses 'pwuser', we create 'node' for compatibility)
-RUN useradd -m -s /bin/zsh -u 1000 node && \
+# Rename existing 'ubuntu' user (UID 1000) to 'node' for devcontainer compatibility
+# The Playwright image comes with 'ubuntu' user at UID 1000, we need 'node' for our devcontainer.json
+RUN usermod -l node -d /home/node -m ubuntu && \
+  groupmod -n node ubuntu && \
+  chsh -s /bin/zsh node && \
   echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh, /usr/local/bin/add-domain-to-firewall.sh" > /etc/sudoers.d/node-firewall && \
   chmod 0440 /etc/sudoers.d/node-firewall && \
-  usermod -aG docker node 2>/dev/null || true
+  usermod -aG docker node 2>/dev/null || groupadd docker && usermod -aG docker node || true
 
 # Persist bash history
 RUN mkdir /commandhistory && \

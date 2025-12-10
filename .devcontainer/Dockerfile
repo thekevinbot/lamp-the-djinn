@@ -33,22 +33,18 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   wget \
   ca-certificates
 
-# Install Docker CLI only (not full Docker engine) - much faster than get.docker.com
+# Install Docker CLI and git-delta in one layer
 ARG DOCKER_VERSION=27.3.1
-RUN ARCH=$(dpkg --print-architecture) && \
-  curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/docker-${DOCKER_VERSION}.tgz" | \
-  tar xz --strip-components=1 -C /usr/local/bin docker/docker
-
-# Install git-delta
 ARG GIT_DELTA_VERSION=0.18.2
 RUN ARCH=$(dpkg --print-architecture) && \
+  curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/docker-${DOCKER_VERSION}.tgz" | \
+  tar xz --strip-components=1 -C /usr/local/bin docker/docker && \
   wget -q "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
   dpkg -i "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" && \
   rm "git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb"
 
 # Copy firewall scripts early (rarely change, good for caching)
-COPY init-firewall.sh add-domain-to-firewall.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/init-firewall.sh /usr/local/bin/add-domain-to-firewall.sh
+COPY --chmod=755 init-firewall.sh add-domain-to-firewall.sh /usr/local/bin/
 
 # Install Claude Code globally as root (simpler, avoids permission issues)
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
@@ -80,7 +76,7 @@ WORKDIR /workspace
 # Switch to non-root user for remaining setup
 USER node
 
-# Install zsh with oh-my-zsh
+# Install zsh with oh-my-zsh and set up SSH directory
 ARG ZSH_IN_DOCKER_VERSION=1.2.0
 RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v${ZSH_IN_DOCKER_VERSION}/zsh-in-docker.sh)" -- \
   -p git \
@@ -88,7 +84,5 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
   -a "source /usr/share/doc/fzf/examples/key-bindings.zsh || true" \
   -a "source /usr/share/doc/fzf/examples/completion.zsh || true" \
   -a "export PROMPT_COMMAND='history -a' && export HISTFILE=/commandhistory/.bash_history" \
-  -x
-
-# Set up SSH directory (ssh-keyscan moved to postStartCommand for freshness)
-RUN mkdir -p ~/.ssh && chmod 700 ~/.ssh
+  -x && \
+  mkdir -p ~/.ssh && chmod 700 ~/.ssh

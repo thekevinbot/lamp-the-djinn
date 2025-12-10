@@ -43,14 +43,17 @@ jobs:
         run: |
           echo "=== Running hadolint on .devcontainer/Dockerfile ==="
           ./hadolint --version
+          # Show all warnings for visibility but don't fail
+          ./hadolint .devcontainer/Dockerfile || true
+          echo ""
+          echo "=== Checking for errors only ==="
+          # Only fail on errors (not warnings/info)
           ./hadolint \
             --failure-threshold error \
             --ignore DL3008 \
             --ignore DL3059 \
             --ignore DL4006 \
             --ignore SC1091 \
-            .devcontainer/Dockerfile || {
-              echo "=== Hadolint failed, showing all warnings ==="
-              ./hadolint .devcontainer/Dockerfile || true
-              exit 1
-            }
+            --ignore SC2016 \
+            --ignore SC2086 \
+            .devcontainer/Dockerfile

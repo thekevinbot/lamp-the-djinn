@@ -30,20 +30,18 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
   vim \
   openssh-client \
   wget \
-  ca-certificates
+  ca-certificates \
+  iputils-ping
 
-# Install Docker CLI, git-delta, and cache zsh-in-docker script (parallel downloads)
+# Install Docker CLI, git-delta, and cache zsh-in-docker script
 ARG DOCKER_VERSION=27.3.1
 ARG GIT_DELTA_VERSION=0.18.2
 ARG ZSH_IN_DOCKER_VERSION=1.2.0
 RUN ARCH=$(dpkg --print-architecture) && \
-  curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/docker-${DOCKER_VERSION}.tgz" -o /tmp/docker.tgz & \
-  wget -q "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" -O /tmp/git-delta.deb & \
-  wget -q "https://github.com/deluan/zsh-in-docker/releases/download/v${ZSH_IN_DOCKER_VERSION}/zsh-in-docker.sh" -O /tmp/zsh-in-docker.sh & \
-  wait && \
-  tar xzf /tmp/docker.tgz --strip-components=1 -C /usr/local/bin docker/docker && \
-  dpkg -i /tmp/git-delta.deb && \
-  rm /tmp/docker.tgz /tmp/git-delta.deb
+  curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/docker-${DOCKER_VERSION}.tgz" | tar xz --strip-components=1 -C /usr/local/bin docker/docker && \
+  curl -fsSL "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" -o /tmp/git-delta.deb && \
+  dpkg -i /tmp/git-delta.deb && rm /tmp/git-delta.deb && \
+  curl -fsSL "https://github.com/deluan/zsh-in-docker/releases/download/v${ZSH_IN_DOCKER_VERSION}/zsh-in-docker.sh" -o /tmp/zsh-in-docker.sh
 
 # Copy firewall scripts early (rarely change, good for caching)
 COPY --chmod=755 init-firewall.sh add-domain-to-firewall.sh /usr/local/bin/

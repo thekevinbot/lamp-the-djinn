@@ -29,6 +29,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Download hadolint
+        run: |
+          curl -sL -o hadolint "https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64"
+          chmod +x hadolint
+
       # Ignored rules:
       # DL3008: Pin versions in apt-get - not practical for devcontainer
       # DL3059: Multiple consecutive RUN - intentional for caching
@@ -36,10 +41,10 @@ jobs:
       # SC1091: Can't follow sourced file - external scripts
       - name: Run Hadolint
         run: |
-          docker run --rm -i hadolint/hadolint hadolint \
+          ./hadolint \
             --failure-threshold error \
             --ignore DL3008 \
             --ignore DL3059 \
             --ignore DL4006 \
             --ignore SC1091 \
-            - < .devcontainer/Dockerfile
+            .devcontainer/Dockerfile

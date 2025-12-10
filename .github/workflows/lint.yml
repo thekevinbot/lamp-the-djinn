@@ -41,10 +41,16 @@ jobs:
       # SC1091: Can't follow sourced file - external scripts
       - name: Run Hadolint
         run: |
+          echo "=== Running hadolint on .devcontainer/Dockerfile ==="
+          ./hadolint --version
           ./hadolint \
             --failure-threshold error \
             --ignore DL3008 \
             --ignore DL3059 \
             --ignore DL4006 \
             --ignore SC1091 \
-            .devcontainer/Dockerfile
+            .devcontainer/Dockerfile || {
+              echo "=== Hadolint failed, showing all warnings ==="
+              ./hadolint .devcontainer/Dockerfile || true
+              exit 1
+            }

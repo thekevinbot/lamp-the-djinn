@@ -92,7 +92,6 @@ fi
 
 # Resolve all domains in parallel for speed
 log "Resolving domains..."
-declare -A DOMAIN_IPS
 for domain in "${DOMAINS[@]}"; do
     # Run dig in background, store PID
     dig +noall +answer +time=5 +tries=2 A "$domain" > "/tmp/dns_$domain" &

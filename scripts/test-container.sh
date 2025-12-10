@@ -39,7 +39,7 @@ echo "Step 2: Cleaning up existing containers..."
 EXISTING=$(docker ps -a --filter "label=devcontainer.local_folder=$PWD" --format "{{.ID}}" 2>/dev/null || true)
 if [ -n "$EXISTING" ]; then
     echo "  Removing existing container: $EXISTING"
-    docker rm -f $EXISTING >/dev/null 2>&1 || true
+    docker rm -f "$EXISTING" >/dev/null 2>&1 || true
 fi
 echo "✓ Cleanup complete"
 echo ""
@@ -47,9 +47,7 @@ echo ""
 # Start fresh container
 echo "Step 3: Starting fresh devcontainer..."
 cd "$PWD"  # Make sure we're in a valid workspace directory
-npx -y @devcontainers/cli up --workspace-folder . --config "$CONFIG" >/dev/null 2>&1
-
-if [ $? -eq 0 ]; then
+if npx -y @devcontainers/cli up --workspace-folder . --config "$CONFIG" >/dev/null 2>&1; then
     echo "✓ Container started successfully"
 else
     echo "✗ Failed to start container"
@@ -60,9 +58,7 @@ echo ""
 
 # Run tests inside container
 echo "Step 4: Running tests inside container..."
-npx -y @devcontainers/cli exec --workspace-folder . --config "$CONFIG" bash "$CLANKER_DIR/scripts/run-tests.sh"
-
-if [ $? -eq 0 ]; then
+if npx -y @devcontainers/cli exec --workspace-folder . --config "$CONFIG" bash "$CLANKER_DIR/scripts/run-tests.sh"; then
     echo ""
     echo "================================"
     echo "✓ Container integration test passed"

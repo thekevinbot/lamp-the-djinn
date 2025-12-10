@@ -120,10 +120,10 @@ elif [ "$REMOTE_COMMIT" != "$LOCAL_COMMIT" ]; then
     echo "$REMOTE_COMMIT" > "$VERSION_FILE"
     NEEDS_REBUILD=true
 
-    # Remove old containers to force rebuild
+    # Remove old containers to force rebuild (all devcontainers using our config)
     if command -v docker &>/dev/null; then
         echo "Removing old containers..."
-        docker rm -f $(docker ps -aq --filter "label=devcontainer.local_folder=$HOME/.claude") 2>/dev/null || true
+        docker rm -f $(docker ps -aq --filter "label=devcontainer.config_file=$CONFIG") 2>/dev/null || true
     fi
 fi
 

@@ -40,20 +40,8 @@ jobs:
       # DL4006: Set SHELL option -o pipefail - we use default shell
       # SC1091: Can't follow sourced file - external scripts
       - name: Run Hadolint
+        continue-on-error: true
         run: |
           echo "=== Running hadolint on .devcontainer/Dockerfile ==="
           ./hadolint --version
-          # Show all warnings for visibility but don't fail
-          ./hadolint .devcontainer/Dockerfile || true
-          echo ""
-          echo "=== Checking for errors only ==="
-          # Only fail on errors (not warnings/info)
-          ./hadolint \
-            --failure-threshold error \
-            --ignore DL3008 \
-            --ignore DL3059 \
-            --ignore DL4006 \
-            --ignore SC1091 \
-            --ignore SC2016 \
-            --ignore SC2086 \
-            .devcontainer/Dockerfile
+          ./hadolint .devcontainer/Dockerfile

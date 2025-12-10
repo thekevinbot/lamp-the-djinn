@@ -61,32 +61,69 @@ ipset create allowed-domains hash:net
 log "Fetching GitHub IP ranges..."
 gh_ranges=$(curl -s https://api.github.com/meta)
 if [ -z "$gh_ranges" ]; then
-    echo "ERROR: Failed to fetch GitHub IP ranges"
-    exit 1
+    echo "WARNING: Failed to fetch GitHub IP ranges (continuing without them)"
+elif ! echo "$gh_ranges" | jq -e '.web and .api and .git' >/dev/null; then
+    echo "WARNING: GitHub API response missing required fields (continuing without them)"
+else
+    log "Processing GitHub IPs..."
+    while read -r cidr; do
+        if [[ ! "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
+            echo "WARNING: Invalid CIDR range from GitHub meta: $cidr (skipping)"
+            continue
+        fi
+        log "Adding GitHub range $cidr"
+        ipset add allowed-domains "$cidr"
+    done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 fi
-
-if ! echo "$gh_ranges" | jq -e '.web and .api and .git' >/dev/null; then
-    echo "ERROR: GitHub API response missing required fields"
-    exit 1
-fi
-
-log "Processing GitHub IPs..."
-while read -r cidr; do
-    if [[ ! "$cidr" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
-        echo "ERROR: Invalid CIDR range from GitHub meta: $cidr"
-        exit 1
-    fi
-    log "Adding GitHub range $cidr"
-    ipset add allowed-domains "$cidr"
-done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 
 # Resolve and add other allowed domains
 DOMAINS=(
+    # npm ecosystem
     "registry.npmjs.org"
+    "npmjs.org"
+    "npm.org"
+
+    # Python ecosystem
+    "pypi.org"
+    "files.pythonhosted.org"
+    "pypi.python.org"
+    "pythonhosted.org"
+    "bootstrap.pypa.io"
+
+    # Container registries
+    "docker.io"
+    "registry-1.docker.io"
+    "production.cloudflare.docker.com"
+    "ghcr.io"
+    "gcr.io"
+    "quay.io"
+
+    # CDNs (commonly used by npm packages)
+    "unpkg.com"
+    "cdn.jsdelivr.net"
+    "cdnjs.cloudflare.com"
+
+    # GitHub (beyond the /meta IPs)
+    "raw.githubusercontent.com"
+    "objects.githubusercontent.com"
+    "codeload.github.com"
+    "gist.githubusercontent.com"
+
+    # Rust ecosystem
+    "crates.io"
+    "static.crates.io"
+
+    # Go ecosystem
+    "proxy.golang.org"
+    "sum.golang.org"
+
+    # Anthropic services
     "api.anthropic.com"
     "sentry.io"
     "statsig.anthropic.com"
     "statsig.com"
+
+    # VS Code
     "marketplace.visualstudio.com"
     "vscode.blob.core.windows.net"
     "update.code.visualstudio.com"
@@ -107,8 +144,8 @@ for domain in "${DOMAINS[@]}"; do
     rm -f "/tmp/dns_$domain"
 
     if [ -z "$ips" ]; then
-        echo "ERROR: Failed to resolve $domain"
-        exit 1
+        echo "WARNING: Failed to resolve $domain (skipping)"
+        continue
     fi
 
     while read -r ip; do
@@ -120,6 +157,17 @@ for domain in "${DOMAINS[@]}"; do
         ipset add allowed-domains "$ip" 2>/dev/null || true  # Ignore duplicates
     done < <(echo "$ips")
 done
+
+# Load user-approved domains from previous sessions
+ALLOWED_FILE="/home/node/.claude/.allowed-browser-domains"
+if [ -f "$ALLOWED_FILE" ]; then
+    log "Loading user-approved domains..."
+    while IFS= read -r domain || [ -n "$domain" ]; do
+        [ -z "$domain" ] && continue
+        [[ "$domain" =~ ^# ]] && continue  # Skip comments
+        /usr/local/bin/add-domain-to-firewall.sh "$domain" 2>/dev/null || true
+    done < "$ALLOWED_FILE"
+fi
 
 # Get host IP from default route
 HOST_IP=$(ip route | grep default | cut -d" " -f3)

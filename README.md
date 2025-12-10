@@ -153,6 +153,18 @@ Done! Copy `~/.claude/` to bring your configuration if desired.
 2. Test locally
 3. Commit and push to repo
 
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ALLOWED_DOMAINS_FILE` | `~/.claude/.allowed-browser-domains` | Path to user domain whitelist |
+| `CLAUDE_CONFIG_DIR` | `/home/node/.claude` | Claude configuration directory |
+| `NODE_OPTIONS` | `--max-old-space-size=4096` | Node.js memory limit (4GB) |
+| `DEVCONTAINER` | `true` | Indicates running in devcontainer |
+| `SHELL` | `/bin/zsh` | Default shell |
+| `EDITOR` / `VISUAL` | `nano` | Default text editor |
+| `POWERLEVEL9K_DISABLE_GITSTATUS` | `true` | Disables git status in prompt (performance) |
+
 ## Architecture Principles
 
 1. **Minimal Core** - Clanker handles only devcontainer setup

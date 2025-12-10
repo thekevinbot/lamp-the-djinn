@@ -39,8 +39,8 @@ RUN ARCH=$(dpkg --print-architecture) && \
   curl -fsSL "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" -o /tmp/git-delta.deb && \
   dpkg -i /tmp/git-delta.deb && rm /tmp/git-delta.deb
 
-# Copy firewall scripts early (rarely change, good for caching)
-COPY --chmod=755 init-firewall.sh add-domain-to-firewall.sh /usr/local/bin/
+# Copy firewall and utility scripts early (rarely change, good for caching)
+COPY --chmod=755 init-firewall.sh add-domain-to-firewall.sh safe-rm /usr/local/bin/
 
 # Install Claude Code globally as root (simpler, avoids permission issues)
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
@@ -54,7 +54,13 @@ RUN OLD_USER=$(getent passwd 1000 | cut -d: -f1) && \
   usermod -l node -d /home/node -m "$OLD_USER" && \
   groupmod -n node "$OLD_GROUP" && \
   chsh -s /bin/zsh node && \
-  echo "node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh, /usr/local/bin/add-domain-to-firewall.sh" > /etc/sudoers.d/node-firewall && \
+  cat > /etc/sudoers.d/node-firewall << 'SUDOERS' && \
+node ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh
+node ALL=(root) NOPASSWD: /usr/local/bin/add-domain-to-firewall.sh
+node ALL=(root) NOPASSWD: /sbin/ipset add allowed-domains *
+node ALL=(root) NOPASSWD: /sbin/ipset test allowed-domains *
+node ALL=(root) NOPASSWD: /sbin/ipset list allowed-domains
+SUDOERS
   chmod 0440 /etc/sudoers.d/node-firewall && \
   (usermod -aG docker node 2>/dev/null || groupadd docker && usermod -aG docker node || true) && \
   mkdir /commandhistory && \
@@ -76,8 +82,15 @@ USER node
 
 # Install oh-my-zsh and configure shell
 RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended && \
-  sed -i 's/plugins=(git)/plugins=(git fzf)/' ~/.zshrc && \
-  echo 'source /usr/share/doc/fzf/examples/key-bindings.zsh || true' >> ~/.zshrc && \
-  echo 'source /usr/share/doc/fzf/examples/completion.zsh || true' >> ~/.zshrc && \
-  echo 'export PROMPT_COMMAND="history -a" && export HISTFILE=/commandhistory/.bash_history' >> ~/.zshrc && \
-  mkdir -p ~/.ssh && chmod 700 ~/.ssh
+  mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
+  cat >> ~/.zshrc << 'EOF'
+plugins=(git fzf)
+source /usr/share/doc/fzf/examples/key-bindings.zsh 2>/dev/null || true
+source /usr/share/doc/fzf/examples/completion.zsh 2>/dev/null || true
+export PROMPT_COMMAND="history -a"
+export HISTFILE=/commandhistory/.bash_history
+EOF
+
+# Health check to verify Claude Code is functional
+HEALTHCHECK --interval=60s --timeout=10s --start-period=10s --retries=3 \
+  CMD claude --version > /dev/null 2>&1 || exit 1

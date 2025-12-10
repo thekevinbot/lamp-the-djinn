@@ -39,8 +39,9 @@ RUN ARCH=$(dpkg --print-architecture) && \
   curl -fsSL "https://github.com/dandavison/delta/releases/download/${GIT_DELTA_VERSION}/git-delta_${GIT_DELTA_VERSION}_${ARCH}.deb" -o /tmp/git-delta.deb && \
   dpkg -i /tmp/git-delta.deb && rm /tmp/git-delta.deb
 
-# Copy firewall and utility scripts early (rarely change, good for caching)
+# Copy firewall scripts, utilities, and domain whitelist
 COPY --chmod=755 init-firewall.sh add-domain-to-firewall.sh safe-rm /usr/local/bin/
+COPY whitelisted-domains.txt /usr/local/share/whitelisted-domains.txt
 
 # Install Claude Code globally as root (simpler, avoids permission issues)
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \

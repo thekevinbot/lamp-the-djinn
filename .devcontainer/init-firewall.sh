@@ -76,58 +76,19 @@ else
     done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 fi
 
-# Resolve and add other allowed domains
-DOMAINS=(
-    # npm ecosystem
-    "registry.npmjs.org"
-    "npmjs.org"
-    "npm.org"
-
-    # Python ecosystem
-    "pypi.org"
-    "files.pythonhosted.org"
-    "pypi.python.org"
-    "pythonhosted.org"
-    "bootstrap.pypa.io"
-
-    # Container registries
-    "docker.io"
-    "registry-1.docker.io"
-    "production.cloudflare.docker.com"
-    "ghcr.io"
-    "gcr.io"
-    "quay.io"
-
-    # CDNs (commonly used by npm packages)
-    "unpkg.com"
-    "cdn.jsdelivr.net"
-    "cdnjs.cloudflare.com"
-
-    # GitHub (beyond the /meta IPs)
-    "raw.githubusercontent.com"
-    "objects.githubusercontent.com"
-    "codeload.github.com"
-    "gist.githubusercontent.com"
-
-    # Rust ecosystem
-    "crates.io"
-    "static.crates.io"
-
-    # Go ecosystem
-    "proxy.golang.org"
-    "sum.golang.org"
-
-    # Anthropic services
-    "api.anthropic.com"
-    "sentry.io"
-    "statsig.anthropic.com"
-    "statsig.com"
-
-    # VS Code
-    "marketplace.visualstudio.com"
-    "vscode.blob.core.windows.net"
-    "update.code.visualstudio.com"
-)
+# Load whitelisted domains from file
+DOMAINS_FILE="/usr/local/share/whitelisted-domains.txt"
+DOMAINS=()
+if [ -f "$DOMAINS_FILE" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip empty lines and comments
+        [[ -z "$line" || "$line" =~ ^# ]] && continue
+        DOMAINS+=("$line")
+    done < "$DOMAINS_FILE"
+    log "Loaded ${#DOMAINS[@]} domains from $DOMAINS_FILE"
+else
+    echo "WARNING: Domains file not found at $DOMAINS_FILE"
+fi
 
 # Resolve all domains in parallel for speed
 log "Resolving domains..."

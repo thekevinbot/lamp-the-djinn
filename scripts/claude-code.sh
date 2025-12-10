@@ -178,6 +178,19 @@ else
 fi
 mv "$tmp" "$CONFIG"
 
+# Add docker group to runArgs if docker socket exists
+if [ -S /var/run/docker.sock ]; then
+    DOCKER_GID=$(stat -c '%g' /var/run/docker.sock 2>/dev/null)
+    if [ -n "$DOCKER_GID" ] && command -v jq &>/dev/null; then
+        tmp=$(mktemp)
+        # Add --group-add to runArgs if not already present
+        if ! jq -e '.runArgs | contains(["--group-add"])' "$CONFIG" >/dev/null 2>&1; then
+            jq --arg gid "$DOCKER_GID" '.runArgs += ["--group-add", $gid]' "$CONFIG" > "$tmp"
+            mv "$tmp" "$CONFIG"
+        fi
+    fi
+fi
+
 # Build the postStartCommand to configure git and gh
 POST_START_COMMANDS=("sudo /usr/local/bin/init-firewall.sh")
 

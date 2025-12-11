@@ -34,8 +34,13 @@ def generate_ssh_config(runtime_dir: Path, ssh_key_name: str) -> Path:
     return ssh_config
 
 
-def modify_config(config: dict, args: argparse.Namespace, runtime_dir: Path) -> dict:
+def modify_config(config: dict, args: argparse.Namespace, runtime_dir: Path, devcontainer_dir: Path | None = None) -> dict:
     """Modify devcontainer config with user-specific settings."""
+
+    # If --build flag, replace image with build config
+    if args.build and devcontainer_dir:
+        config.pop("image", None)
+        config["build"] = {"dockerfile": "Dockerfile", "context": "."}
 
     # Replace .claude docker volume with bind mount
     if "mounts" in config:
@@ -116,6 +121,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--git-user-email", help="Git user.email")
     parser.add_argument("--gh-token", help="GitHub token")
     parser.add_argument("--gpg-key-id", help="GPG key ID for signing")
+    parser.add_argument("--build", action="store_true", help="Build from local Dockerfile instead of using pre-built image")
     return parser
 
 
@@ -197,13 +203,26 @@ def main() -> None:
 
     # Load and modify config
     config = json.loads(source_config.read_text())
-    config = modify_config(config, args, runtime_dir)
+    devcontainer_dir = source_config.parent
+    config = modify_config(config, args, runtime_dir, devcontainer_dir)
 
     # Write runtime config
     runtime_config = runtime_dir / "devcontainer.json"
     runtime_config.write_text(json.dumps(config, indent=2))
 
-    run_devcontainer(runtime_config, cwd, claude_args)
+    # Copy Dockerfile and related files if building locally
+    if args.build:
+        import shutil
+        runtime_devcontainer = runtime_dir / ".devcontainer"
+        runtime_devcontainer.mkdir(exist_ok=True)
+        for f in devcontainer_dir.iterdir():
+            if f.is_file():
+                shutil.copy2(f, runtime_devcontainer / f.name)
+        # Update config path to be in .devcontainer subdir
+        runtime_config = runtime_devcontainer / "devcontainer.json"
+        runtime_config.write_text(json.dumps(config, indent=2))
+
+    run_devcontainer(runtime_config, cwd if not args.build else runtime_dir, claude_args)
 
 
 # Install command

@@ -1,0 +1,83 @@
+name: Update Base Image Digest
+
+on:
+  workflow_dispatch:  # Manual trigger
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday at midnight UTC
+
+jobs:
+  update-digest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get current image info
+        id: current
+        run: |
+          # Extract current image reference from Dockerfile
+          CURRENT=$(grep -E '^FROM mcr.microsoft.com/playwright:' .devcontainer/Dockerfile | head -1 | sed 's/FROM //')
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+          echo "Current image: $CURRENT"
+
+      - name: Get latest digest
+        id: digest
+        run: |
+          IMAGE="mcr.microsoft.com/playwright"
+          TAG="v1.57.0-noble"
+
+          # Get manifest and extract digest
+          DIGEST=$(docker manifest inspect "$IMAGE:$TAG" --verbose 2>/dev/null | jq -r '.[0].Descriptor.digest // .Descriptor.digest // empty' || true)
+
+          # Fallback: pull and inspect
+          if [ -z "$DIGEST" ]; then
+            docker pull "$IMAGE:$TAG"
+            DIGEST=$(docker inspect "$IMAGE:$TAG" --format='{{index .RepoDigests 0}}' | cut -d@ -f2)
+          fi
+
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+          echo "Digest: $DIGEST"
+
+      - name: Update Dockerfile
+        if: steps.digest.outputs.digest != ''
+        run: |
+          IMAGE="mcr.microsoft.com/playwright"
+          TAG="v1.57.0-noble"
+          DIGEST="${{ steps.digest.outputs.digest }}"
+
+          # Update the FROM line with digest
+          sed -i "s|FROM ${IMAGE}:${TAG}.*|FROM ${IMAGE}:${TAG}@${DIGEST}|" .devcontainer/Dockerfile
+
+          echo "Updated Dockerfile:"
+          head -5 .devcontainer/Dockerfile
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet .devcontainer/Dockerfile; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No changes detected"
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Changes detected"
+          fi
+
+      - name: Create Pull Request
+        if: steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore: update base image digest for playwright:v1.57.0-noble"
+          title: "chore: Update base image digest"
+          body: |
+            This PR updates the base Docker image digest for reproducible builds.
+
+            **Previous:** `${{ steps.current.outputs.current }}`
+            **New digest:** `${{ steps.digest.outputs.digest }}`
+
+            This is an automated update to pin the exact image content.
+          branch: update-base-image-digest
+          delete-branch: true

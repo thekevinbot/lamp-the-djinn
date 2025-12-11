@@ -1,4 +1,6 @@
 # Use Playwright base image which includes Node.js, Chromium, and all browser dependencies pre-installed
+# Note: The digest should be pinned for reproducible builds. Run the "Update Base Image Digest"
+# workflow to update it, or manually run: docker manifest inspect mcr.microsoft.com/playwright:v1.57.0-noble
 FROM mcr.microsoft.com/playwright:v1.57.0-noble
 
 ARG TZ

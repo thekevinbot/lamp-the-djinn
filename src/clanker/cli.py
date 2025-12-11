@@ -150,6 +150,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gh-token", help="GitHub token")
     parser.add_argument("--gpg-key-id", help="GPG key ID for signing")
     parser.add_argument("--build", action="store_true", help="Build from local Dockerfile instead of using pre-built image")
+    parser.add_argument("--shell", metavar="CMD", help="Run a shell command instead of claude (for testing)")
     return parser
 
 
@@ -162,18 +163,20 @@ def apply_env_defaults(args: argparse.Namespace) -> None:
     args.gpg_key_id = args.gpg_key_id or os.environ.get("CLANKER_GPG_KEY_ID")
 
 
-def run_devcontainer(config_path: Path, repo_root: Path, claude_args: list[str]) -> None:
-    """Run the devcontainer with claude."""
-    os.chdir(repo_root)
-
+def run_devcontainer(config_path: Path, workspace_dir: Path, project_dir: Path, claude_args: list[str], shell_cmd: str | None = None) -> None:
+    """Run the devcontainer with claude or a shell command."""
     devcontainer_cmd = ["npx", "-y", "@devcontainers/cli"]
-    claude_cmd = ["claude", "--dangerously-skip-permissions"] + claude_args
+
+    if shell_cmd:
+        run_cmd = ["bash", "-c", shell_cmd]
+    else:
+        run_cmd = ["claude", "--dangerously-skip-permissions"] + claude_args
 
     exec_cmd = devcontainer_cmd + [
         "exec",
-        "--workspace-folder", ".",
+        "--workspace-folder", str(project_dir),
         "--config", str(config_path),
-    ] + claude_cmd
+    ] + run_cmd
 
     result = subprocess.run(exec_cmd, stderr=subprocess.DEVNULL)
 
@@ -182,7 +185,7 @@ def run_devcontainer(config_path: Path, repo_root: Path, claude_args: list[str])
 
         up_cmd = devcontainer_cmd + [
             "up",
-            "--workspace-folder", ".",
+            "--workspace-folder", str(project_dir),
             "--config", str(config_path),
         ]
 
@@ -245,7 +248,7 @@ def main() -> None:
     runtime_config = devcontainer_dir / "devcontainer.json"
     runtime_config.write_text(json.dumps(config, indent=2))
 
-    run_devcontainer(runtime_config, cache_dir, claude_args)
+    run_devcontainer(runtime_config, cache_dir, project_dir, claude_args, args.shell)
 
 
 def install() -> None:

@@ -33,6 +33,7 @@ clanker-install = "clanker.cli:install"
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
     "pytest-describe>=2.2.0",
     "pytest-watcher>=0.4.0",
 ]

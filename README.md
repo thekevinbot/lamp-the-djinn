@@ -12,9 +12,25 @@ ClankerCage provides:
 
 ## Quick Setup
 
-No installation needed! Run directly:
+### Recommended: Install via uvx (safer)
 
 ```bash
+uvx clankercage
+```
+
+This uses Python's package manager with integrity verification. Install [uv](https://docs.astral.sh/uv/) first if needed.
+
+### Alternative: curl|bash (convenience)
+
+> **Security Warning:** The `curl|bash` pattern executes remote code without verification.
+> If the repository is compromised, your system could be compromised. For security-conscious
+> users, we recommend reviewing the script first or using the `uvx` method above.
+
+```bash
+# Review the script first (recommended):
+curl -s https://raw.githubusercontent.com/clankerbot/clankercage/main/scripts/claude-code.sh | less
+
+# Then run it:
 bash <(curl -s https://raw.githubusercontent.com/clankerbot/clankercage/main/scripts/claude-code.sh)
 ```
 
@@ -24,8 +40,6 @@ This script:
 - Converts Claude Code's docker volume to bind mount
 - Starts the devcontainer with proper permissions
 - Makes `~/.claude` accessible from host and container
-
-**That's it!** No repo to clone, no files to manage.
 
 ## Directory Structure
 
@@ -43,7 +57,15 @@ Clean and minimal - just the devcontainer config.
 
 ## Installation
 
-### 1. Run Setup Script
+### Option 1: uvx (Recommended)
+
+```bash
+uvx clankercage
+```
+
+### Option 2: curl|bash
+
+See [security warning above](#alternative-curlbash-convenience) before using this method.
 
 ```bash
 bash <(curl -s https://raw.githubusercontent.com/clankerbot/clankercage/main/scripts/claude-code.sh)
@@ -113,7 +135,10 @@ scripts/approve-domain.sh example.com --check-only
 ## Setup on New Machine
 
 ```bash
-# Run the setup script
+# Recommended: use uvx
+uvx clankercage
+
+# Or use curl|bash (see security warning in Quick Setup section)
 bash <(curl -s https://raw.githubusercontent.com/clankerbot/clankercage/main/scripts/claude-code.sh)
 ```
 

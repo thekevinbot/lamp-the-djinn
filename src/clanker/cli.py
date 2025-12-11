@@ -207,22 +207,16 @@ def main() -> None:
     config = modify_config(config, args, runtime_dir, devcontainer_dir)
 
     # Write runtime config
-    runtime_config = runtime_dir / "devcontainer.json"
+    if args.build:
+        # For local builds, write config to the actual .devcontainer dir
+        # so Dockerfile context works correctly
+        runtime_config = devcontainer_dir / "devcontainer.runtime.json"
+    else:
+        runtime_config = runtime_dir / "devcontainer.json"
+
     runtime_config.write_text(json.dumps(config, indent=2))
 
-    # Copy Dockerfile and related files if building locally
-    if args.build:
-        import shutil
-        runtime_devcontainer = runtime_dir / ".devcontainer"
-        runtime_devcontainer.mkdir(exist_ok=True)
-        for f in devcontainer_dir.iterdir():
-            if f.is_file():
-                shutil.copy2(f, runtime_devcontainer / f.name)
-        # Update config path to be in .devcontainer subdir
-        runtime_config = runtime_devcontainer / "devcontainer.json"
-        runtime_config.write_text(json.dumps(config, indent=2))
-
-    run_devcontainer(runtime_config, cwd if not args.build else runtime_dir, claude_args)
+    run_devcontainer(runtime_config, cwd, claude_args)
 
 
 # Install command

@@ -1,9 +1,10 @@
-# Session Summary: Clanker CI/CD and Docker Improvements
+# Session Summary: Python Package Refactor
 
-## Latest Changes (This Session)
+## What Was Done This Session
 
-### Converted to Proper Python Package ✅
-Clanker is now a proper Python package installable via `uvx` from GitHub.
+### Converted to Python Package with uvx Support ✅
+
+Refactored from bash scripts to a proper Python package installable via `uvx`.
 
 **Package structure:**
 ```
@@ -13,12 +14,62 @@ src/clanker/
 ```
 
 **Entry points:**
-- `clanker` → runs claude-code locally (expects .devcontainer/ in cwd or installed)
+- `clanker` → runs locally (expects .devcontainer/ in cwd or installed location)
 - `clanker-install` → downloads from GitHub, then runs clanker
 
-### Usage
+### Added `--build` Flag ✅
 
-**Run directly from GitHub with uvx:**
+For testing local Dockerfile changes instead of using pre-built GHCR image.
+
+---
+
+## Next Steps
+
+**Docker access still not working** - container needs restart for `--group-add` fix to take effect.
+
+### On Host, Run:
+
+```bash
+# Stop current container
+docker ps | grep clanker
+docker stop <container_id>
+
+# Start fresh with local build
+uvx --from /mnt/castellan/code/clanker clanker --build \
+    --ssh-key-file ~/.ssh/id_ed25519_clanker \
+    --git-user-name clankerbot \
+    --git-user-email "248217931+clankerbot@users.noreply.github.com" \
+    --gpg-key-id C567F8478F289CC4
+```
+
+### After Restart, Verify:
+```bash
+docker ps  # Should work without permission denied
+```
+
+---
+
+## Usage Reference
+
+**Local dev (in clanker repo):**
+```bash
+uvx --from /mnt/castellan/code/clanker clanker \
+    --ssh-key-file ~/.ssh/id_ed25519_clanker \
+    --git-user-name clankerbot \
+    --git-user-email "248217931+clankerbot@users.noreply.github.com" \
+    --gpg-key-id C567F8478F289CC4
+```
+
+**With local Dockerfile build:**
+```bash
+uvx --from /mnt/castellan/code/clanker clanker --build \
+    --ssh-key-file ~/.ssh/id_ed25519_clanker \
+    --git-user-name clankerbot \
+    --git-user-email "248217931+clankerbot@users.noreply.github.com" \
+    --gpg-key-id C567F8478F289CC4
+```
+
+**From GitHub (remote):**
 ```bash
 uvx --from git+https://github.com/clankerbot/clanker clanker-install \
     --ssh-key-file ~/.ssh/id_ed25519_clanker \
@@ -27,15 +78,7 @@ uvx --from git+https://github.com/clankerbot/clanker clanker-install \
     --gpg-key-id C567F8478F289CC4
 ```
 
-**Local development (in clanker repo):**
-```bash
-cd ~/clanker
-uvx --from . clanker --ssh-key-file ~/.ssh/id_ed25519_clanker
-# OR
-uv run clanker --ssh-key-file ~/.ssh/id_ed25519_clanker
-```
-
-**Updated fish function (`cc`):**
+**Fish function (`cc`):**
 ```fish
 function cc
     uvx --from git+https://github.com/clankerbot/clanker clanker-install \
@@ -46,7 +89,9 @@ function cc
 end
 ```
 
-### CLI Arguments
+---
+
+## CLI Arguments
 
 | Argument | Env Variable | Description |
 |----------|--------------|-------------|
@@ -55,31 +100,9 @@ end
 | `--git-user-email` | `CLANKER_GIT_USER_EMAIL` | Git user.email |
 | `--gh-token` | `CLANKER_GH_TOKEN` | GitHub token |
 | `--gpg-key-id` | `CLANKER_GPG_KEY_ID` | GPG key ID for signing |
-
-Any additional arguments are passed through to `claude`.
+| `--build` | - | Build from local Dockerfile |
 
 ---
-
-## Previous Session Work
-
-### 1. Container Tools - All Working ✅
-- **uv/uvx**: Fixed installation using official `COPY --from=ghcr.io/astral-sh/uv:latest`
-- **pnpm**: Installed via `corepack enable && corepack prepare pnpm@latest --activate`
-- **Docker socket**: Added `--group-add` to runArgs for socket access
-
-### 2. CI/CD Workflows ✅
-- **test-container.yml**: Tests all tools (uv, pnpm, docker, claude, etc.) on every push
-- **docker-publish.yml**: Fixed cache busting - now includes Dockerfile hash in cache key
-- **lint.yml**: ShellCheck (passing), Hadolint (warnings only, `continue-on-error: true`)
-
-### 3. Docker Socket Access
-The CLI auto-detects the host's docker socket group ID and adds `--group-add <GID>` to runArgs dynamically.
-
-**Important:** Container must be restarted after config changes take effect. The devcontainer CLI reuses existing containers.
-
-### 4. GitHub Auth Issue (Not Fixed)
-- `gh` CLI needs PAT with scopes: `repo`, `workflow`, `write:packages`
-- Run: `gh auth login --with-token <<< "ghp_yourtoken"`
 
 ## Remaining TODOs
 
@@ -93,10 +116,9 @@ From `/workspace/TODO.md`:
 ## GitHub Auth
 - [ ] Create PAT for clankerbot - need token with scopes: repo, workflow, write:packages
 - [ ] Run `gh auth login` with clankerbot token
-
-## Blog Post (separate repo)
-- [ ] Add "Baked-In Tools" section: pnpm, uv, Playwright, Docker socket
 ```
+
+---
 
 ## Key Files
 
@@ -105,13 +127,15 @@ From `/workspace/TODO.md`:
 | `src/clanker/cli.py` | CLI entry points (main, install) |
 | `pyproject.toml` | Package config with entry points |
 | `.devcontainer/devcontainer.json` | Base devcontainer config |
-| `.devcontainer/Dockerfile` | Container image with uv, pnpm, etc. |
+| `.devcontainer/Dockerfile` | Container image |
 | `.devcontainer/init-firewall.sh` | Network allowlist setup |
-| `.devcontainer/whitelisted-domains.txt` | Allowed domains (33 total) |
+| `.devcontainer/whitelisted-domains.txt` | Allowed domains |
 
-## How to Set Up Automerge
+## Recent Commits
 
-1. Go to repo Settings → Branches → Add rule for `main`
-2. Enable "Require status checks to pass before merging"
-3. Select both "Test Container" and "Lint" workflows
-4. Enable "Allow auto-merge" in repo Settings → General
+```
+e3cba2e Add --build flag for local Dockerfile testing
+5cfd853 Refactor CLI to Python package with uvx support
+18f60b8 Update TODO with completed items
+663c4af Add docker group to runArgs for socket access
+```

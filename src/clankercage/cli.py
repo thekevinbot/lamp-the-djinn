@@ -18,14 +18,18 @@ def get_embedded_devcontainer_dir() -> Path:
     return Path(__file__).parent / "devcontainer"
 
 
-def get_workspace_dir() -> Path:
-    """Get the fixed workspace directory for devcontainer files."""
-    return Path.home() / ".cache" / "clankercage" / "workspace"
+def get_workspace_dir(instance_id: str) -> Path:
+    """Get instance-specific workspace directory for devcontainer files.
+
+    Each instance gets its own directory to prevent race conditions when
+    multiple ClankerCage instances run with different configurations.
+    """
+    return Path.home() / ".cache" / "clankercage" / f"workspace-{instance_id}"
 
 
-def extract_devcontainer_files() -> Path:
-    """Extract embedded devcontainer files to a fixed cache directory."""
-    workspace_dir = get_workspace_dir()
+def extract_devcontainer_files(instance_id: str) -> Path:
+    """Extract embedded devcontainer files to an instance-specific cache directory."""
+    workspace_dir = get_workspace_dir(instance_id)
     devcontainer_dir = workspace_dir / ".devcontainer"
     devcontainer_dir.mkdir(parents=True, exist_ok=True)
 
@@ -151,16 +155,17 @@ def apply_env_defaults(args: argparse.Namespace) -> None:
     args.gpg_key_id = args.gpg_key_id or os.environ.get("CLANKERCAGE_GPG_KEY_ID")
 
 
-def run_devcontainer(config_path: Path, workspace_dir: Path, project_dir: Path, claude_args: list[str], shell_cmd: str | None = None, safe_mode: bool = False) -> None:
+def run_devcontainer(config_path: Path, workspace_dir: Path, project_dir: Path, claude_args: list[str], shell_cmd: str | None = None, safe_mode: bool = False, instance_id: str | None = None) -> None:
     """Run the devcontainer with claude or a shell command.
 
-    Each invocation creates a new container with a unique instance ID,
-    allowing multiple clanker instances to run simultaneously.
+    Each invocation uses a unique instance ID for both the config directory
+    and container label, allowing multiple clanker instances to run simultaneously.
     """
     devcontainer_cmd = ["npx", "-y", "@devcontainers/cli"]
 
-    # Generate unique instance ID for this container
-    instance_id = uuid.uuid4().hex[:12]
+    # Use provided instance ID or generate one (for backwards compatibility)
+    if instance_id is None:
+        instance_id = uuid.uuid4().hex[:12]
     id_label = f"clanker.instance={instance_id}"
 
     if shell_cmd:
@@ -295,12 +300,16 @@ def main() -> None:
     # Capture current working directory (the project to mount)
     project_dir = Path.cwd().resolve()
 
-    # Extract embedded devcontainer files to cache directory
-    cache_dir = extract_devcontainer_files()
+    # Generate unique instance ID early - used for both cache dir and container ID
+    instance_id = uuid.uuid4().hex[:12]
+
+    # Extract embedded devcontainer files to instance-specific cache directory
+    # This prevents race conditions when multiple instances run concurrently
+    cache_dir = extract_devcontainer_files(instance_id)
     devcontainer_dir = cache_dir / ".devcontainer"
     source_config = devcontainer_dir / "devcontainer.json"
 
-    # Setup runtime directory for SSH config etc
+    # Setup runtime directory for SSH config etc (shared, not instance-specific)
     runtime_dir = Path.home() / ".claude" / "clankercage-runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
 
@@ -312,7 +321,7 @@ def main() -> None:
     runtime_config = devcontainer_dir / "devcontainer.json"
     runtime_config.write_text(json.dumps(config, indent=2))
 
-    run_devcontainer(runtime_config, cache_dir, project_dir, claude_args, args.shell, args.safe_mode)
+    run_devcontainer(runtime_config, cache_dir, project_dir, claude_args, args.shell, args.safe_mode, instance_id)
 
 
 def shell_remote() -> None:

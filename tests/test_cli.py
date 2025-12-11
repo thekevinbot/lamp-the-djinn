@@ -13,13 +13,24 @@ from pathlib import Path
 import pytest
 
 
-def run_clanker(project_dir: Path, shell_cmd: str, timeout: int = 120) -> subprocess.CompletedProcess:
+def run_clanker(
+    project_dir: Path,
+    shell_cmd: str,
+    timeout: int = 120,
+    ssh_key_file: str | None = None,
+    build: bool = False,
+) -> subprocess.CompletedProcess:
     """Run clanker with --shell in a given project directory."""
+    cmd = ["uv", "run", "clanker", "--shell", shell_cmd]
+
+    if build:
+        cmd.append("--build")
+
+    if ssh_key_file:
+        cmd.extend(["--ssh-key-file", ssh_key_file])
+
     return subprocess.run(
-        [
-            "uv", "run", "clanker",
-            "--shell", shell_cmd,
-        ],
+        cmd,
         cwd=project_dir,
         capture_output=True,
         text=True,
@@ -166,3 +177,105 @@ def describe_installed_tools():
 
         assert result.returncode == 0, f"Playwright chromium failed: {result.stderr}"
         assert "test.png" in result.stdout, f"Screenshot not created: {result.stdout}"
+
+
+@pytest.fixture(scope="module")
+def ssh_server(tmp_path_factory):
+    """Start a local SSH server with a generated keypair.
+
+    Mimics GitHub: accepts key auth, host key must be in known_hosts.
+    """
+    import time
+
+    tmp_path = tmp_path_factory.mktemp("ssh")
+
+    # Generate keypair
+    private_key = tmp_path / "id_ed25519"
+    subprocess.run(
+        ["ssh-keygen", "-t", "ed25519", "-f", str(private_key), "-N", "", "-q"],
+        check=True,
+    )
+    private_key.chmod(0o600)
+
+    # Setup authorized_keys
+    ssh_dir = tmp_path / "server_ssh"
+    ssh_dir.mkdir()
+    (ssh_dir / "authorized_keys").write_text((tmp_path / "id_ed25519.pub").read_text())
+
+    # Start SSH server
+    container_name = f"test-sshd-{uuid.uuid4().hex[:8]}"
+    subprocess.run(
+        [
+            "docker", "run", "-d",
+            "--name", container_name,
+            "-e", "PUID=1000", "-e", "PGID=1000",
+            "-e", "USER_NAME=git",
+            "-e", "PASSWORD_ACCESS=false",
+            "-v", f"{ssh_dir}:/config/.ssh",
+            "lscr.io/linuxserver/openssh-server:latest",
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    # Wait for sshd
+    for _ in range(30):
+        if subprocess.run(["docker", "exec", container_name, "pgrep", "-f", "sshd"], capture_output=True).returncode == 0:
+            break
+        time.sleep(1)
+    time.sleep(2)
+
+    # Get container IP
+    ip = subprocess.run(
+        ["docker", "inspect", container_name, "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+    yield {"key": str(private_key), "ip": ip, "port": 2222, "container": container_name}
+
+    subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+
+
+def describe_ssh():
+    """SSH test using a local SSH server that mimics GitHub's behavior."""
+
+    @pytest.mark.integration
+    def it_can_ssh_to_server_via_clanker(tmp_path: Path, ssh_server):
+        """Test SSH via clanker CLI - mirrors: uv run clanker --ssh-key-file KEY --shell 'ssh -T git@server'.
+
+        This test MUST use the real clanker CLI, not docker run directly.
+        If this test passes but the real command fails, the test is wrong.
+
+        NOTE: SSH mounts must be specified from the FIRST run. If a container is started
+        without --ssh-key-file, adding it later won't update the existing container's mounts.
+        This is a Docker limitation - mounts can't be added to running containers.
+        """
+        # Copy SSH private key to tmp_path (will be passed to --ssh-key-file)
+        ssh_key = tmp_path / "id_ed25519"
+        ssh_key.write_text(Path(ssh_server["key"]).read_text())
+        ssh_key.chmod(0o600)
+
+        # Get server's host key and save to workspace (mounted at /workspace)
+        keyscan = subprocess.run(
+            ["ssh-keyscan", "-p", str(ssh_server["port"]), ssh_server["ip"]],
+            capture_output=True, text=True,
+        )
+        known_hosts = tmp_path / "server_known_hosts"
+        known_hosts.write_text(keyscan.stdout)
+
+        # Run clanker WITH --ssh-key-file from the start
+        result = run_clanker(
+            tmp_path,
+            f"cat /workspace/server_known_hosts >> ~/.ssh/known_hosts && "
+            f"ssh -T -i /home/node/.ssh/id_ed25519 -p {ssh_server['port']} git@{ssh_server['ip']} echo success",
+            ssh_key_file=str(ssh_key),
+            build=True,
+            timeout=300,
+        )
+
+        assert result.returncode == 0, (
+            f"SSH via clanker failed.\nstderr: {result.stderr}\nstdout: {result.stdout}"
+        )
+        assert "success" in result.stdout, (
+            f"Expected 'success' in output.\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        )

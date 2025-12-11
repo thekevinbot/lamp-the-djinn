@@ -1,10 +1,34 @@
 [project]
 name = "clanker"
 version = "0.1.0"
-description = "A comprehensive setup and configuration wrapper for Claude Code"
+description = "A sandboxed Claude Code devcontainer runner"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "clankerbot", email = "248217931+clankerbot@users.noreply.github.com" }
+]
+keywords = ["claude", "devcontainer", "sandbox", "ai"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/clankerbot/clanker"
+Repository = "https://github.com/clankerbot/clanker"
+
+[project.scripts]
+clanker = "clanker.cli:main"
+clanker-install = "clanker.cli:install"
 
 [project.optional-dependencies]
 dev = [
@@ -28,4 +52,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["scripts", "hooks", "config"]
+packages = ["src/clanker"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/clanker",
+    ".devcontainer/devcontainer.json",
+    ".devcontainer/whitelisted-domains.txt",
+]

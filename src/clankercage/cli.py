@@ -37,17 +37,6 @@ def extract_devcontainer_files() -> Path:
     return workspace_dir
 
 
-def get_docker_socket_gid() -> str | None:
-    """Get the GID of the docker socket if it exists."""
-    socket_path = Path("/var/run/docker.sock")
-    if socket_path.is_socket():
-        try:
-            return str(os.stat(socket_path).st_gid)
-        except OSError:
-            pass
-    return None
-
-
 def generate_ssh_config(runtime_dir: Path, ssh_key_name: str) -> Path:
     """Generate SSH config file for GitHub."""
     ssh_config = runtime_dir / "ssh_config"
@@ -111,13 +100,6 @@ def modify_config(config: dict, args: argparse.Namespace, runtime_dir: Path, dev
         config["mounts"].append(
             "source=${localEnv:HOME}/.gnupg,target=/home/node/.gnupg,type=bind"
         )
-
-    # Add docker group to runArgs if socket exists
-    docker_gid = get_docker_socket_gid()
-    if docker_gid:
-        config.setdefault("runArgs", [])
-        if "--group-add" not in config["runArgs"]:
-            config["runArgs"].extend(["--group-add", docker_gid])
 
     # Build postStartCommand
     commands = ["sudo /usr/local/bin/init-firewall.sh"]

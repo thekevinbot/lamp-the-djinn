@@ -59,3 +59,6 @@ TODO.md
 writing-style-guide.md
 lamp-the-djinn-grafana
 gpg-signing-worktree
+
+# Secrets — provider seam. Never commit the real key; .env.example is the template.
+.env

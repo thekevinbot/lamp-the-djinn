@@ -1,0 +1,14 @@
+# LiteLLM proxy -- the provider seam. Runs on the host, NOT inside the cage,
+# so the OpenRouter key stays out of the agent's blast radius.
+# Bound to localhost; the cage reaches it later via the docker bridge gateway.
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    ports:
+      - "127.0.0.1:4000:4000"
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    env_file:
+      - .env
+    restart: unless-stopped

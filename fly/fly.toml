@@ -1,0 +1,49 @@
+# fly.toml -- "fly" isolation backend for lamp-the-djinn.
+#
+# This runs the lamp-the-djinn cage as a remote Fly.io Machine, which executes
+# inside a Firecracker microVM (a far stronger isolation boundary than a stock
+# runc container on a shared host). The cage rejoins your tailnet via Tailscale
+# (see entrypoint.sh) so it can reach the local model proxy on `tower` and honor
+# the same egress policy as the local backend.
+#
+# UNVERIFIED: there is no Fly account or `flyctl` in this environment, so this
+# file has NOT been deployed or validated. Treat it as scaffolding.
+
+app = "lamp-the-djinn-cage"
+primary_region = "iad"
+
+[build]
+  # Reuse the same published cage image as the local backend.
+  image = "ghcr.io/thekevinbot/lamp-the-djinn:latest"
+  # To build from this repo instead of the published image, comment out `image`
+  # above and point Fly at the Dockerfile:
+  #   dockerfile = "../.devcontainer/Dockerfile"
+
+[env]
+  # Non-secret config only. Secrets (TS_AUTHKEY, proxy keys) must be set via
+  #   fly secrets set TS_AUTHKEY=... LTD_PROXY_API_KEY=...
+  # so they are never committed to git.
+  LTD_RUNTIME = "runc"            # microVM already isolates; runc inside is fine
+  # LTD_PROXY_URL  -- set to the tailnet address of tower's LiteLLM proxy,
+  #                   e.g. http://tower:4000/v1 (reachable once Tailscale is up)
+  # LTD_EGRESS_PROXY_ONLY = "1"   -- opt-in tighter egress (see init-firewall.sh)
+  # LTD_PROXY_HOST        -- single host the cage is allowed to reach
+
+# Tailscale rejoin (see entrypoint.sh). Provide the auth key as a SECRET:
+#   fly secrets set TS_AUTHKEY=tskey-auth-xxxxx
+# The entrypoint reads $TS_AUTHKEY at boot to run `tailscale up`. Do NOT put the
+# key in [env] above -- keep it in `fly secrets`.
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1gb"
+
+# Scale-to-zero: keep no machines running when idle, and let an inbound request
+# (or `fly machine start`) wake the cage on demand. This makes the remote cage
+# cheap to leave provisioned.
+[http_service]
+  internal_port = 8080
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0

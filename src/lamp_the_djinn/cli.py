@@ -20,6 +20,50 @@ def get_embedded_devcontainer_dir() -> Path:
     return Path(__file__).parent / "devcontainer"
 
 
+def detect_runtime(preferred: str) -> str:
+    """Resolve which OCI runtime to hand to Docker (the "isolation seam").
+
+    Queries Docker for its registered runtimes and reconciles the user's
+    preference against what is actually installed.
+
+    - preferred == "auto": prefer gVisor ("runsc") when it is installed,
+      otherwise fall back to the stock "runc". This keeps default behavior
+      unchanged on hosts that only have runc.
+    - preferred is a concrete name (e.g. "runsc", "kata-runtime", "runc"):
+      use it if Docker reports it, otherwise warn on stderr and fall back to
+      "runc" so the run still proceeds.
+
+    Robust to any docker failure (missing binary, daemon down, malformed
+    output): always returns a usable runtime ("runc").
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "info", "--format", "{{json .Runtimes}}"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            available: list[str] = []
+        else:
+            runtimes = json.loads(result.stdout.strip() or "{}")
+            available = list(runtimes.keys()) if isinstance(runtimes, dict) else []
+    except (OSError, ValueError):
+        available = []
+
+    if preferred == "auto":
+        return "runsc" if "runsc" in available else "runc"
+
+    if preferred in available:
+        return preferred
+
+    print(
+        f"Warning: requested isolation runtime '{preferred}' is not registered "
+        f"with Docker; falling back to 'runc'.",
+        file=sys.stderr,
+    )
+    return "runc"
+
+
 def get_workspace_dir(instance_id: str) -> Path:
     """Get instance-specific workspace directory for devcontainer files.
 
@@ -67,6 +111,7 @@ def modify_config(
     proxy_url: str | None = None,
     model: str | None = None,
     proxy_api_key: str | None = None,
+    runtime: str = "runc",
 ) -> dict:
     """Modify devcontainer config with user-specific settings."""
 
@@ -135,6 +180,13 @@ def modify_config(
 
     # Add docker run flags (ports, volumes, env vars) to runArgs
     config.setdefault("runArgs", [])
+
+    # Isolation seam: when a stronger OCI runtime than the stock runc was
+    # resolved (e.g. gVisor's runsc or kata-runtime), tell Docker to use it.
+    # For plain runc we add nothing, leaving default behavior untouched.
+    if runtime != "runc":
+        config["runArgs"].extend(["--runtime", runtime])
+
     if args.port:
         for port_mapping in args.port:
             # Support both HOST:CONTAINER and just PORT (same for both)
@@ -205,6 +257,11 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--proxy-url", default=None,
                         help="LiteLLM proxy base URL. If set, the harness is wired to it. "
                              "Defaults to http://host.docker.internal:4000/v1 when a proxy is in use")
+    parser.add_argument("--runtime", default=None,
+                        help="OCI isolation runtime for Docker (the isolation seam): "
+                             "'auto' (default, uses gVisor/runsc when installed else runc), "
+                             "or a concrete name like 'runsc', 'kata-runtime', 'runc'. "
+                             "Env: LTD_RUNTIME")
     parser.add_argument("--shell", metavar="CMD", help="Run a shell command instead of the harness (for testing)")
     parser.add_argument("--safe-mode", action="store_true", help="Run the harness with permission prompts enabled (more interruptions, extra safety)")
     # Docker run flags - passed directly to runArgs
@@ -229,6 +286,9 @@ def apply_env_defaults(args: argparse.Namespace) -> None:
     args.proxy_url = args.proxy_url or os.environ.get("LTD_PROXY_URL")
     # Proxy auth: LiteLLM master key. Defaults to the project's literal placeholder.
     args.proxy_api_key = os.environ.get("LTD_PROXY_API_KEY", "lamp-the-djinn")
+    # Isolation runtime preference. "auto" picks gVisor when installed, else runc,
+    # so stock-Docker hosts (runc-only) keep their existing behavior.
+    args.runtime = args.runtime or os.environ.get("LTD_RUNTIME") or "auto"
 
 
 def run_devcontainer(config_path: Path, workspace_dir: Path, project_dir: Path, extra_args: list[str], shell_cmd: str | None = None, safe_mode: bool = False, instance_id: str | None = None, harness: "harness_mod.Harness | None" = None) -> None:
@@ -391,6 +451,12 @@ def main() -> None:
     # Check Docker is running before proceeding
     check_docker_accessible()
 
+    # Resolve the isolation runtime against what Docker actually has registered.
+    # Default ("auto") yields runc on stock Docker (no --runtime flag added) and
+    # only switches to gVisor when runsc is genuinely installed.
+    runtime = detect_runtime(args.runtime)
+    print(f"Isolation runtime: {runtime}")
+
     # Pull image if not building locally and image doesn't exist
     if not args.build:
         pull_docker_image_if_needed()
@@ -420,7 +486,7 @@ def main() -> None:
     config = modify_config(
         config, args, runtime_dir, devcontainer_dir, project_dir,
         harness=harness, proxy_url=proxy_url, model=args.model,
-        proxy_api_key=args.proxy_api_key,
+        proxy_api_key=args.proxy_api_key, runtime=runtime,
     )
 
     # Write modified config back to the temp devcontainer dir

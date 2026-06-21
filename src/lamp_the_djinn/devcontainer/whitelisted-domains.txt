@@ -50,3 +50,22 @@ statsig.com
 marketplace.visualstudio.com
 vscode.blob.core.windows.net
 update.code.visualstudio.com
+
+# ============================================================================
+# PATH TO PROXY-ONLY EGRESS (package registries can be removed)
+# ============================================================================
+# The package-registry entries above (npm, Python, container, Rust, Go
+# ecosystems -- e.g. registry.npmjs.org, pypi.org, files.pythonhosted.org,
+# crates.io, proxy.golang.org, docker.io, ghcr.io) are only needed because the
+# in-cage agent may fetch harness packages at runtime.
+#
+# Once the TRUSTED nightly cooldown cache (scripts/refresh-harness-cache.sh)
+# reliably pre-fetches every harness package on the HOST and the cage consumes
+# it via the read-only harness-cache mount, the agent no longer needs to reach
+# these registries itself. At that point those registry domains can be DELETED
+# from this file, leaving only the model proxy reachable -- i.e. proxy-only
+# egress (pair with LTD_EGRESS_PROXY_ONLY + LTD_PROXY_HOST in init-firewall.sh).
+#
+# Do NOT delete them yet: removing a registry before the cache covers its
+# packages will make uv/npm installs fail closed inside the cage.
+# ============================================================================

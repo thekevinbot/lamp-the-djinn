@@ -1,5 +1,5 @@
 """
-Tests for the clankercage CLI.
+Tests for the lamp-the-djinn CLI.
 
 These tests verify that:
 - The CLI correctly mounts local directories
@@ -13,7 +13,7 @@ from unittest import mock
 
 import pytest
 
-from clankercage.cli import get_container_info
+from lamp_the_djinn.cli import get_container_info
 
 
 def describe_get_container_info():
@@ -99,8 +99,8 @@ def run_clanker(
     ssh_key_file: str | None = None,
     build: bool = False,
 ) -> subprocess.CompletedProcess:
-    """Run clankercage with --shell in a given project directory."""
-    cmd = ["uv", "run", "clankercage", "--shell", shell_cmd]
+    """Run lamp-the-djinn with --shell in a given project directory."""
+    cmd = ["uv", "run", "lamp-the-djinn", "--shell", shell_cmd]
 
     if build:
         cmd.append("--build")
@@ -129,7 +129,7 @@ def describe_workspace_mounting():
         marker_file.write_text(marker)
         marker_file.chmod(0o644)  # Readable by container's node user
 
-        # Run clankercage and check if the file exists in /workspace
+        # Run lamp-the-djinn and check if the file exists in /workspace
         result = run_clanker(workspace_path, "cat /workspace/test-marker.txt")
 
         assert result.returncode == 0, f"Command failed: {result.stderr}"
@@ -306,9 +306,9 @@ def describe_ssh():
     @pytest.mark.integration
     @pytest.mark.skip(reason="SSH config bind mount has permission issues in CI - needs container-native solution")
     def it_can_ssh_to_server_via_clanker(workspace_path: Path, ssh_server):
-        """Test SSH via clankercagecage CLI - mirrors: uv run clanker --ssh-key-file KEY --shell 'ssh -T git@server'.
+        """Test SSH via lamp-the-djinn CLI - mirrors: uv run lamp-the-djinn --ssh-key-file KEY --shell 'ssh -T git@server'.
 
-        This test MUST use the real clankercage CLI, not docker run directly.
+        This test MUST use the real lamp-the-djinn CLI, not docker run directly.
         If this test passes but the real command fails, the test is wrong.
 
         NOTE: SSH mounts must be specified from the FIRST run. If a container is started
@@ -340,7 +340,7 @@ def describe_ssh():
         )
 
         assert result.returncode == 0, (
-            f"SSH via clankercage failed.\nstderr: {result.stderr}\nstdout: {result.stdout}"
+            f"SSH via lamp-the-djinn failed.\nstderr: {result.stderr}\nstdout: {result.stdout}"
         )
         assert "success" in result.stdout, (
             f"Expected 'success' in output.\nstdout: {result.stdout}\nstderr: {result.stderr}"
@@ -352,8 +352,8 @@ def run_claude(
     claude_args: list[str],
     timeout: int = 120,
 ) -> subprocess.CompletedProcess:
-    """Run clankercage with claude (not --shell) in a given project directory."""
-    cmd = ["uv", "run", "clankercage"] + claude_args
+    """Run lamp-the-djinn with claude (not --shell) in a given project directory."""
+    cmd = ["uv", "run", "lamp-the-djinn"] + claude_args
 
     return subprocess.run(
         cmd,

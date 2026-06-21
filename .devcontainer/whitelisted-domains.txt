@@ -25,7 +25,7 @@ quay.io
 # WARNING: These domains serve user-uploaded content and could be used for data exfiltration.
 # An attacker with code execution could publish an npm package and curl data to it via unpkg.com.
 # Consider removing these if your workflow doesn't require runtime CDN fetches.
-# See: https://github.com/clankerbot/clankercage/issues/30
+# See: https://github.com/thekevinbot/lamp-the-djinn/issues/30
 unpkg.com
 cdn.jsdelivr.net
 cdnjs.cloudflare.com

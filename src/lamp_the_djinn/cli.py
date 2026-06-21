@@ -1,4 +1,4 @@
-"""CLI entry points for ClankerCage."""
+"""CLI entry points for lamp-the-djinn."""
 
 import argparse
 import json
@@ -22,9 +22,9 @@ def get_workspace_dir(instance_id: str) -> Path:
     """Get instance-specific workspace directory for devcontainer files.
 
     Each instance gets its own directory to prevent race conditions when
-    multiple ClankerCage instances run with different configurations.
+    multiple lamp-the-djinn instances run with different configurations.
     """
-    return Path.home() / ".cache" / "clankercage" / f"workspace-{instance_id}"
+    return Path.home() / ".cache" / "lamp-the-djinn" / f"workspace-{instance_id}"
 
 
 def extract_devcontainer_files(instance_id: str) -> Path:
@@ -63,7 +63,7 @@ def modify_config(config: dict, args: argparse.Namespace, runtime_dir: Path, dev
         config.pop("image", None)
         config["build"] = {"dockerfile": "Dockerfile", "context": "."}
 
-    # Mount the actual project directory (where user ran clankercage from)
+    # Mount the actual project directory (where user ran lamp-the-djinn from)
     if project_dir:
         config["workspaceMount"] = f"source={project_dir},target=/workspace,type=bind,consistency=delegated"
 
@@ -170,11 +170,11 @@ def create_parser() -> argparse.ArgumentParser:
 
 def apply_env_defaults(args: argparse.Namespace) -> None:
     """Apply environment variable defaults to args."""
-    args.ssh_key_file = args.ssh_key_file or os.environ.get("CLANKERCAGE_SSH_KEY")
-    args.git_user_name = args.git_user_name or os.environ.get("CLANKERCAGE_GIT_USER_NAME")
-    args.git_user_email = args.git_user_email or os.environ.get("CLANKERCAGE_GIT_USER_EMAIL")
-    args.gh_token = args.gh_token or os.environ.get("CLANKERCAGE_GH_TOKEN")
-    args.gpg_key_id = args.gpg_key_id or os.environ.get("CLANKERCAGE_GPG_KEY_ID")
+    args.ssh_key_file = args.ssh_key_file or os.environ.get("LTD_SSH_KEY")
+    args.git_user_name = args.git_user_name or os.environ.get("LTD_GIT_USER_NAME")
+    args.git_user_email = args.git_user_email or os.environ.get("LTD_GIT_USER_EMAIL")
+    args.gh_token = args.gh_token or os.environ.get("LTD_GH_TOKEN")
+    args.gpg_key_id = args.gpg_key_id or os.environ.get("LTD_GPG_KEY_ID")
 
 
 def run_devcontainer(config_path: Path, workspace_dir: Path, project_dir: Path, claude_args: list[str], shell_cmd: str | None = None, safe_mode: bool = False, instance_id: str | None = None) -> None:
@@ -219,7 +219,7 @@ def run_devcontainer(config_path: Path, workspace_dir: Path, project_dir: Path, 
     os.execvp("npx", exec_cmd)
 
 
-IMAGE_NAME = "ghcr.io/clankerbot/clankercage:latest"
+IMAGE_NAME = "ghcr.io/thekevinbot/lamp-the-djinn:latest"
 
 
 def get_container_info(image_name: str) -> dict:
@@ -269,7 +269,7 @@ def check_docker_accessible() -> None:
             "╔════════════════════════════════════════════════════════════════╗\n"
             "║  ERROR: Docker is not running or not accessible               ║\n"
             "╠════════════════════════════════════════════════════════════════╣\n"
-            "║  ClankerCage requires Docker to run.                          ║\n"
+            "║  lamp-the-djinn requires Docker to run.                       ║\n"
             "║                                                                ║\n"
             "║  Please ensure:                                               ║\n"
             "║    1. Docker is installed                                     ║\n"
@@ -332,7 +332,7 @@ def main() -> None:
     source_config = devcontainer_dir / "devcontainer.json"
 
     # Setup runtime directory for SSH config etc (shared, not instance-specific)
-    runtime_dir = Path.home() / ".claude" / "clankercage-runtime"
+    runtime_dir = Path.home() / ".claude" / "lamp-the-djinn-runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
 
     # Load and modify config
@@ -347,5 +347,5 @@ def main() -> None:
 
 
 def shell_remote() -> None:
-    """Alias for main() - for clankercage-remote entry point."""
+    """Alias for main() - for lamp-the-djinn-remote entry point."""
     main()

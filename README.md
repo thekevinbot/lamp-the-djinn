@@ -1,4 +1,4 @@
-# ClankerCage
+# lamp-the-djinn
 
 A sandbox for running Claude Code with full autonomy, without risking your system.
 
@@ -8,12 +8,12 @@ A sandbox for running Claude Code with full autonomy, without risking your syste
 
 You want Claude Code to run with `--dangerously-skip-permissions` so it can work without constant interruptions. But you don't want it [deleting your hard drive](https://www.tomshardware.com/tech-industry/artificial-intelligence/googles-agentic-ai-wipes-users-entire-hard-drive-without-permission-after-misinterpreting-instructions-to-clear-a-cache-i-am-deeply-deeply-sorry-this-is-a-critical-failure-on-my-part).
 
-ClankerCage runs Claude Code inside a Docker container. The container mounts your project directory, so Claude can read and write files. But it can't touch anything else on your system. A network firewall blocks outbound traffic by default.
+lamp-the-djinn runs Claude Code inside a Docker container. The container mounts your project directory, so Claude can read and write files. But it can't touch anything else on your system. A network firewall blocks outbound traffic by default.
 
 ## Quick Start
 
 ```bash
-uvx --from git+https://github.com/clankerbot/clankercage clankercage
+uvx --from git+https://github.com/thekevinbot/lamp-the-djinn lamp-the-djinn
 ```
 
 ## Configuration
@@ -21,7 +21,7 @@ uvx --from git+https://github.com/clankerbot/clankercage clankercage
 For a dedicated GitHub identity (recommended for distinguishing AI commits from your own):
 
 ```bash
-uvx --from git+https://github.com/clankerbot/clankercage clankercage \
+uvx --from git+https://github.com/thekevinbot/lamp-the-djinn lamp-the-djinn \
   --ssh-key-file ~/.ssh/id_ed25519_yourbot \
   --git-user-name yourbot \
   --git-user-email "yourbot@users.noreply.github.com" \

@@ -10,6 +10,8 @@ import sys
 import uuid
 from pathlib import Path
 
+from . import harness as harness_mod
+
 __all__ = ["main", "shell_remote"]
 
 
@@ -55,7 +57,17 @@ def generate_ssh_config(runtime_dir: Path, ssh_key_name: str) -> Path:
     return ssh_config
 
 
-def modify_config(config: dict, args: argparse.Namespace, runtime_dir: Path, devcontainer_dir: Path | None = None, project_dir: Path | None = None) -> dict:
+def modify_config(
+    config: dict,
+    args: argparse.Namespace,
+    runtime_dir: Path,
+    devcontainer_dir: Path | None = None,
+    project_dir: Path | None = None,
+    harness: "harness_mod.Harness | None" = None,
+    proxy_url: str | None = None,
+    model: str | None = None,
+    proxy_api_key: str | None = None,
+) -> dict:
     """Modify devcontainer config with user-specific settings."""
 
     # If --build flag, replace image with build config
@@ -106,6 +118,21 @@ def modify_config(config: dict, args: argparse.Namespace, runtime_dir: Path, dev
             "source=${localEnv:HOME}/.gnupg,target=/home/node/.gnupg,type=bind,readonly"
         )
 
+    # Read-only harness cache mount (only when the proxy/harness feature is engaged).
+    # The trusted nightly refresh (scripts/refresh-harness-cache.sh) runs on the
+    # HOST and pre-fetches harness packages (npm/uv) into this dir with a cooldown
+    # window. The cage mounts it read-only so the untrusted agent uses pre-vetted
+    # packages instead of downloading fresh (potentially malicious) ones itself.
+    # NOTE: read-only cache + zero registry egress means a package that was not
+    # pre-fetched cannot be installed in-cage. Verify uv/npm fail gracefully
+    # against a read-only cache in a real container before relying on this.
+    if proxy_url:
+        config.setdefault("mounts", [])
+        config["mounts"].append(
+            "source=${localEnv:HOME}/.cache/lamp-the-djinn/harness-cache,"
+            "target=/home/node/.cache/ltd-harness,type=bind,readonly"
+        )
+
     # Add docker run flags (ports, volumes, env vars) to runArgs
     config.setdefault("runArgs", [])
     if args.port:
@@ -120,6 +147,21 @@ def modify_config(config: dict, args: argparse.Namespace, runtime_dir: Path, dev
     if args.env:
         for env_var in args.env:
             config["runArgs"].extend(["-e", env_var])
+
+    # Provider env injection: wire the harness to the LiteLLM proxy on the host.
+    if proxy_url and harness is not None:
+        # Point the in-container npm/uv caches at the read-only harness cache so
+        # uvx/npx find pre-fetched packages instead of reaching the network.
+        config["runArgs"].extend(["-e", "UV_CACHE_DIR=/home/node/.cache/ltd-harness/uv"])
+        config["runArgs"].extend(["-e", "npm_config_cache=/home/node/.cache/ltd-harness/npm"])
+
+        api_key = proxy_api_key or "lamp-the-djinn"
+        prov_env = harness_mod.provider_env(harness, proxy_url, model or "local", api_key)
+        for key, value in prov_env.items():
+            config["runArgs"].extend(["-e", f"{key}={value}"])
+        # The container reaches the host proxy via the docker bridge gateway.
+        # On Linux host.docker.internal is not automatic, so map it explicitly.
+        config["runArgs"].append("--add-host=host.docker.internal:host-gateway")
 
     # Build postStartCommand
     commands = ["sudo /usr/local/bin/init-firewall.sh"]
@@ -147,8 +189,8 @@ def modify_config(config: dict, args: argparse.Namespace, runtime_dir: Path, dev
 def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     parser = argparse.ArgumentParser(
-        description="Run Claude Code in a sandboxed devcontainer",
-        epilog="Any additional arguments are passed to claude."
+        description="Run a coding agent in a sandboxed devcontainer",
+        epilog="Any additional arguments are passed to the harness."
     )
     parser.add_argument("--ssh-key-file", help="Path to SSH private key")
     parser.add_argument("--git-user-name", help="Git user.name")
@@ -156,8 +198,15 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gh-token", help="GitHub token")
     parser.add_argument("--gpg-key-id", help="GPG key ID for signing")
     parser.add_argument("--build", action="store_true", help="Build from local Dockerfile instead of using pre-built image")
-    parser.add_argument("--shell", metavar="CMD", help="Run a shell command instead of claude (for testing)")
-    parser.add_argument("--safe-mode", action="store_true", help="Run Claude with permission prompts enabled (more interruptions, extra safety)")
+    parser.add_argument("--harness", default=None,
+                        help="Coding agent to run: a known name (claude, codex, aider) or a raw shell command. Default: claude")
+    parser.add_argument("--model", default=None,
+                        help="Model name passed to the harness via the LiteLLM proxy (default: local)")
+    parser.add_argument("--proxy-url", default=None,
+                        help="LiteLLM proxy base URL. If set, the harness is wired to it. "
+                             "Defaults to http://host.docker.internal:4000/v1 when a proxy is in use")
+    parser.add_argument("--shell", metavar="CMD", help="Run a shell command instead of the harness (for testing)")
+    parser.add_argument("--safe-mode", action="store_true", help="Run the harness with permission prompts enabled (more interruptions, extra safety)")
     # Docker run flags - passed directly to runArgs
     parser.add_argument("-p", "--port", action="append", metavar="HOST:CONTAINER",
                         help="Map a port from host to container (can be specified multiple times)")
@@ -175,10 +224,15 @@ def apply_env_defaults(args: argparse.Namespace) -> None:
     args.git_user_email = args.git_user_email or os.environ.get("LTD_GIT_USER_EMAIL")
     args.gh_token = args.gh_token or os.environ.get("LTD_GH_TOKEN")
     args.gpg_key_id = args.gpg_key_id or os.environ.get("LTD_GPG_KEY_ID")
+    args.harness = args.harness or os.environ.get("LTD_HARNESS") or "claude"
+    args.model = args.model or os.environ.get("LTD_MODEL") or "local"
+    args.proxy_url = args.proxy_url or os.environ.get("LTD_PROXY_URL")
+    # Proxy auth: LiteLLM master key. Defaults to the project's literal placeholder.
+    args.proxy_api_key = os.environ.get("LTD_PROXY_API_KEY", "lamp-the-djinn")
 
 
-def run_devcontainer(config_path: Path, workspace_dir: Path, project_dir: Path, claude_args: list[str], shell_cmd: str | None = None, safe_mode: bool = False, instance_id: str | None = None) -> None:
-    """Run the devcontainer with claude or a shell command.
+def run_devcontainer(config_path: Path, workspace_dir: Path, project_dir: Path, extra_args: list[str], shell_cmd: str | None = None, safe_mode: bool = False, instance_id: str | None = None, harness: "harness_mod.Harness | None" = None) -> None:
+    """Run the devcontainer with the selected harness or a shell command.
 
     Each invocation uses a unique instance ID for both the config directory
     and container label, allowing multiple clanker instances to run simultaneously.
@@ -190,14 +244,17 @@ def run_devcontainer(config_path: Path, workspace_dir: Path, project_dir: Path, 
         instance_id = uuid.uuid4().hex[:12]
     id_label = f"clanker.instance={instance_id}"
 
+    # Default to the claude harness if none was resolved (backward-compatible).
+    if harness is None:
+        harness = harness_mod.HARNESSES["claude"]
+
     if shell_cmd:
         run_cmd = ["bash", "-c", shell_cmd]
-    elif safe_mode:
-        run_cmd = ["claude"] + claude_args
     else:
-        run_cmd = ["claude", "--dangerously-skip-permissions"] + claude_args
+        base = harness.run_safe if (safe_mode and harness.run_safe) else harness.run
+        run_cmd = list(base) + extra_args
 
-    print(f"Starting devcontainer (instance {instance_id})...")
+    print(f"Starting devcontainer (instance {instance_id}, harness {harness.name})...")
 
     up_cmd = devcontainer_cmd + [
         "up",
@@ -295,14 +352,37 @@ def pull_docker_image_if_needed() -> None:
 
 def main() -> None:
     """
-    Main entry point - runs Claude Code in a sandboxed devcontainer.
+    Main entry point - runs a coding agent (harness) in a sandboxed devcontainer.
 
     Uses embedded devcontainer files from the package.
     With --build, builds from Dockerfile. Without, uses pre-built image.
     """
     parser = create_parser()
-    args, claude_args = parser.parse_known_args()
+    args, extra_args = parser.parse_known_args()
+
+    # Detect whether the user explicitly engaged the proxy feature (via flags or
+    # env) BEFORE apply_env_defaults coalesces everything to defaults. This keeps
+    # the bare-default case (plain `claude`, no proxy) behaving exactly as before:
+    # no provider env is injected and the proxy URL stays unset.
+    proxy_engaged = any([
+        args.proxy_url is not None,
+        args.model is not None,
+        args.harness is not None,
+        os.environ.get("LTD_PROXY_URL"),
+        os.environ.get("LTD_MODEL"),
+        os.environ.get("LTD_HARNESS"),
+    ])
+
     apply_env_defaults(args)
+
+    # Resolve the harness (known name or raw command).
+    harness = harness_mod.resolve(args.harness)
+
+    # Determine the proxy URL. When the proxy is engaged but no explicit URL was
+    # given, default to the host bridge gateway (reached via --add-host below).
+    proxy_url = args.proxy_url
+    if proxy_url is None and proxy_engaged:
+        proxy_url = "http://host.docker.internal:4000/v1"
 
     if args.ssh_key_file and not Path(args.ssh_key_file).exists():
         print(f"Error: SSH key not found at {args.ssh_key_file}", file=sys.stderr)
@@ -337,13 +417,20 @@ def main() -> None:
 
     # Load and modify config
     config = json.loads(source_config.read_text())
-    config = modify_config(config, args, runtime_dir, devcontainer_dir, project_dir)
+    config = modify_config(
+        config, args, runtime_dir, devcontainer_dir, project_dir,
+        harness=harness, proxy_url=proxy_url, model=args.model,
+        proxy_api_key=args.proxy_api_key,
+    )
 
     # Write modified config back to the temp devcontainer dir
     runtime_config = devcontainer_dir / "devcontainer.json"
     runtime_config.write_text(json.dumps(config, indent=2))
 
-    run_devcontainer(runtime_config, cache_dir, project_dir, claude_args, args.shell, args.safe_mode, instance_id)
+    run_devcontainer(
+        runtime_config, cache_dir, project_dir, extra_args,
+        args.shell, args.safe_mode, instance_id, harness=harness,
+    )
 
 
 def shell_remote() -> None:

@@ -1,14 +1,14 @@
 # lamp-the-djinn
 
-A sandbox for running Claude Code with full autonomy, without risking your system.
+A sandbox for running any coding agent with full autonomy, without risking your system.
 
 [Read the blog post](https://thekevinscott.com/sandbox-for-claude-code/) for more context.
 
 ## What It Solves
 
-You want Claude Code to run with `--dangerously-skip-permissions` so it can work without constant interruptions. But you don't want it [deleting your hard drive](https://www.tomshardware.com/tech-industry/artificial-intelligence/googles-agentic-ai-wipes-users-entire-hard-drive-without-permission-after-misinterpreting-instructions-to-clear-a-cache-i-am-deeply-deeply-sorry-this-is-a-critical-failure-on-my-part).
+You want a coding agent to run with full autonomy (Claude Code's `--dangerously-skip-permissions`, or any other harness in YOLO mode) so it can work without constant interruptions. But you don't fully trust it — especially when it's driven by an open-weights model — not to [delete your hard drive](https://www.tomshardware.com/tech-industry/artificial-intelligence/googles-agentic-ai-wipes-users-entire-hard-drive-without-permission-after-misinterpreting-instructions-to-clear-a-cache-i-am-deeply-deeply-sorry-this-is-a-critical-failure-on-my-part) or quietly exfiltrate your secrets.
 
-lamp-the-djinn runs Claude Code inside a Docker container. The container mounts your project directory, so Claude can read and write files. But it can't touch anything else on your system. A network firewall blocks outbound traffic by default.
+lamp-the-djinn runs **any** coding agent inside a Docker container — `claude`, `npx @anthropic/claude`, `aider`, or any command you pass. The container mounts only your project directory, so the agent can read and write your code but can't touch anything else on your system, and a default-deny network firewall blocks exfiltration. The model it talks to — local or hosted — is wired through a proxy that holds the real credentials, so they never enter the cage.
 
 ## Quick Start
 
@@ -51,9 +51,13 @@ uvx --from git+https://github.com/thekevinbot/lamp-the-djinn lamp-the-djinn \
 
 ## How It Works
 
-- **Container isolation**: Claude runs in Docker, can only access the mounted project directory
-- **Network firewall**: Outbound traffic blocked by default; whitelisted domains (npm, GitHub, PyPI, etc.) allowed
-- **Git as undo**: Lean on `git reset --hard` as your escape hatch
+Two swappable seams (see [ARCHITECTURE.md](ARCHITECTURE.md) for the full design):
+
+- **Isolation seam**: the agent runs in Docker, accessing only the mounted project directory. Uses gVisor (`runsc`) automatically when it's installed, else stock `runc`; a remote Fly (Firecracker microVM) backend is scaffolded in `fly/`.
+- **Provider seam**: one LiteLLM proxy on the host fronts your local llama.cpp and OpenRouter (e.g. GLM-5.2); the cage only ever sees the proxy, never the real key.
+- **Network firewall**: default-deny outbound; allowlisted domains only, with an opt-in proxy-only mode.
+- **Cooldown cache**: harnesses are pre-fetched by a trusted nightly job with a minimum-release-age window and mounted read-only — supply-chain defense, so the untrusted agent never reaches a registry.
+- **Git as undo**: lean on `git reset --hard` as your escape hatch.
 
 ## Credential Persistence
 

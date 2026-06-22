@@ -1,7 +1,7 @@
 [project]
 name = "lamp-the-djinn"
-version = "0.1.0"
-description = "A sandboxed Claude Code devcontainer runner"
+dynamic = ["version"]
+description = "A sandboxed runner for any coding agent — harness- and model-agnostic"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -93,8 +93,15 @@ omit = ["src/lamp_the_djinn/devcontainer/*"]
 show_missing = true
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+# Shallow clones / tagless checkouts still resolve to a usable dev version.
+fallback_version = "0.1.0"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/lamp_the_djinn"]

@@ -106,7 +106,6 @@ def modify_config(
     runtime_dir: Path,
     devcontainer_dir: Path | None = None,
     project_dir: Path | None = None,
-    harness: "harness_mod.Harness | None" = None,
     proxy_url: str | None = None,
     model: str | None = None,
     proxy_api_key: str | None = None,
@@ -170,6 +169,20 @@ def modify_config(
             "target=/home/node/.cache/ltd-harness,type=bind,readonly"
         )
 
+    # WRITABLE credential-persistence mount. Harness sessions (e.g. an OAuth
+    # token a harness writes after `login`) persist across runs via this volume.
+    #
+    # SECURITY PRINCIPLE: this mount is READ-WRITE and lives inside the cage, so
+    # the untrusted agent can READ everything in it. Therefore persist ONLY
+    # scoped/revocable credentials here. The model key never enters the cage --
+    # it stays in the LiteLLM proxy on the host. The primary git identity stays
+    # out too: push host-side, or supply a fine-grained, single-repo, revocable
+    # PAT. See README "Credential persistence" for the full rationale.
+    config.setdefault("mounts", [])
+    config["mounts"].append(
+        "source=${localEnv:HOME}/.cache/lamp-the-djinn/auth,target=/home/node/.config/ltd-auth,type=bind"
+    )
+
     # Add docker run flags (ports, volumes, env vars) to runArgs
     config.setdefault("runArgs", [])
 
@@ -192,15 +205,18 @@ def modify_config(
         for env_var in args.env:
             config["runArgs"].extend(["-e", env_var])
 
-    # Provider env injection: wire the harness to the LiteLLM proxy on the host.
-    if proxy_url and harness is not None:
+    # Provider env injection: wire whatever command runs in the cage to the
+    # LiteLLM proxy on the host. We inject BOTH provider families (OPENAI_* and
+    # ANTHROPIC_*) since the command is arbitrary and we cannot know its wire
+    # format in advance; the harness reads whichever it understands.
+    if proxy_url:
         # Point the in-container npm/uv caches at the read-only harness cache so
         # uvx/npx find pre-fetched packages instead of reaching the network.
         config["runArgs"].extend(["-e", "UV_CACHE_DIR=/home/node/.cache/ltd-harness/uv"])
         config["runArgs"].extend(["-e", "npm_config_cache=/home/node/.cache/ltd-harness/npm"])
 
         api_key = proxy_api_key or "lamp-the-djinn"
-        prov_env = harness_mod.provider_env(harness, proxy_url, model or "local", api_key)
+        prov_env = harness_mod.provider_env_all(proxy_url, model or "local", api_key)
         for key, value in prov_env.items():
             config["runArgs"].extend(["-e", f"{key}={value}"])
         # The container reaches the host proxy via the docker bridge gateway.
@@ -230,11 +246,93 @@ def modify_config(
     return config
 
 
+def resolve_command(command: list[str], shell_cmd: str | None, safe_mode: bool) -> list[str]:
+    """Decide what to run inside the cage.
+
+    Precedence: explicit command > --shell CMD > default claude. The default
+    preserves today's bare-`ltd` behavior: `claude --dangerously-skip-permissions`
+    normally, or plain `claude` under --safe-mode (permission prompts on).
+    `--shell CMD` is a convenience equal to `bash -c CMD`.
+    """
+    if command:
+        return list(command)
+    if shell_cmd:
+        return ["bash", "-c", shell_cmd]
+    if safe_mode:
+        return ["claude"]
+    return ["claude", "--dangerously-skip-permissions"]
+
+
+def record_manifest(command: list[str]) -> None:
+    """Record a harness package spec to the cache-freshness manifest.
+
+    If the command is `npx <pkg>` / `npm ... <pkg>` or `uvx <pkg>` /
+    `uv tool ... <pkg>`, append the first obvious (non-flag) package token to
+    ``~/.cache/lamp-the-djinn/harness-manifest.txt`` (deduped). The trusted
+    nightly refresh (scripts/refresh-harness-cache.sh) reads this file to warm
+    the read-only harness cache with packages users actually invoke.
+
+    Conservative by design: records only the first non-flag arg after the
+    package-runner token, and only for the runners above. Anything else is a
+    no-op.
+    """
+    if not command:
+        return
+
+    runner = command[0]
+    rest = command[1:]
+
+    if runner in ("npx", "uvx"):
+        # `npx <pkg>` / `uvx <pkg>`: first non-flag arg is the package spec.
+        pkg = _first_non_flag(rest)
+    elif runner == "npm" and rest and rest[0] in ("install", "i", "exec", "x"):
+        # `npm install/exec <pkg>`: spec follows the subcommand.
+        pkg = _first_non_flag(rest[1:])
+    elif runner == "uv" and rest and rest[0] == "tool":
+        # `uv tool install/run <pkg>`: spec follows `tool <subcommand>`.
+        pkg = _first_non_flag(rest[2:]) if len(rest) > 1 else None
+    else:
+        return
+
+    if not pkg:
+        return
+
+    manifest = Path.home() / ".cache" / "lamp-the-djinn" / "harness-manifest.txt"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+
+    existing = manifest.read_text().splitlines() if manifest.exists() else []
+    if pkg in existing:
+        return
+
+    with manifest.open("a") as f:
+        f.write(f"{pkg}\n")
+
+
+def _first_non_flag(args: list[str]) -> str | None:
+    """Return the first argument that does not start with '-', or None."""
+    for a in args:
+        if not a.startswith("-"):
+            return a
+    return None
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     parser = argparse.ArgumentParser(
-        description="Run a coding agent in a sandboxed devcontainer",
-        epilog="Any additional arguments are passed to the harness.",
+        description="Run any coding agent in a sandboxed devcontainer. "
+        "The command after ltd's own options is run inside the cage: "
+        "ltd [ltd-opts] <command...>",
+        epilog=(
+            "Examples:\n"
+            '  ltd claude -p "fix the failing test"\n'
+            "  ltd npx @anthropic/claude\n"
+            "  ltd --model glm-5.2 aider\n"
+            "  ltd                       # bare: runs claude --dangerously-skip-permissions\n"
+            "\n"
+            "Everything after ltd's options is the command to run in the cage; the "
+            "command's own flags (e.g. -p) are passed through untouched."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--ssh-key-file", help="Path to SSH private key")
     parser.add_argument("--git-user-name", help="Git user.name")
@@ -243,11 +341,6 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gpg-key-id", help="GPG key ID for signing")
     parser.add_argument(
         "--build", action="store_true", help="Build from local Dockerfile instead of using pre-built image"
-    )
-    parser.add_argument(
-        "--harness",
-        default=None,
-        help="Coding agent to run: a known name (claude, codex, aider) or a raw shell command. Default: claude",
     )
     parser.add_argument(
         "--model", default=None, help="Model name passed to the harness via the LiteLLM proxy (default: local)"
@@ -294,6 +387,16 @@ def create_parser() -> argparse.ArgumentParser:
         metavar="VAR=VALUE",
         help="Set environment variable (can be specified multiple times)",
     )
+    # The command to run inside the cage. REMAINDER captures everything after
+    # ltd's own options verbatim, so the command's own flags (-p, -v, ...) are
+    # NOT stolen by ltd's -p/-v/-e. Empty => default claude (see resolve_command).
+    parser.add_argument(
+        "command",
+        nargs=argparse.REMAINDER,
+        metavar="command...",
+        help='Command to run in the cage, e.g. `claude -p "hi"` or `npx @anthropic/claude`. '
+        "Default: claude --dangerously-skip-permissions",
+    )
     return parser
 
 
@@ -304,7 +407,6 @@ def apply_env_defaults(args: argparse.Namespace) -> None:
     args.git_user_email = args.git_user_email or os.environ.get("LTD_GIT_USER_EMAIL")
     args.gh_token = args.gh_token or os.environ.get("LTD_GH_TOKEN")
     args.gpg_key_id = args.gpg_key_id or os.environ.get("LTD_GPG_KEY_ID")
-    args.harness = args.harness or os.environ.get("LTD_HARNESS") or "claude"
     args.model = args.model or os.environ.get("LTD_MODEL") or "local"
     args.proxy_url = args.proxy_url or os.environ.get("LTD_PROXY_URL")
     # Proxy auth: LiteLLM master key. Defaults to the project's literal placeholder.
@@ -318,13 +420,15 @@ def run_devcontainer(
     config_path: Path,
     workspace_dir: Path,
     project_dir: Path,
-    extra_args: list[str],
+    command: list[str] | None = None,
     shell_cmd: str | None = None,
     safe_mode: bool = False,
     instance_id: str | None = None,
-    harness: "harness_mod.Harness | None" = None,
 ) -> None:
-    """Run the devcontainer with the selected harness or a shell command.
+    """Run the devcontainer with the resolved command.
+
+    The command is whatever the user typed after ltd's own options. Precedence:
+    explicit command > --shell CMD > default claude (see resolve_command).
 
     Each invocation uses a unique instance ID for both the config directory
     and container label, allowing multiple clanker instances to run simultaneously.
@@ -336,17 +440,9 @@ def run_devcontainer(
         instance_id = uuid.uuid4().hex[:12]
     id_label = f"clanker.instance={instance_id}"
 
-    # Default to the claude harness if none was resolved (backward-compatible).
-    if harness is None:
-        harness = harness_mod.HARNESSES["claude"]
+    run_cmd = resolve_command(command or [], shell_cmd, safe_mode)
 
-    if shell_cmd:
-        run_cmd = ["bash", "-c", shell_cmd]
-    else:
-        base = harness.run_safe if (safe_mode and harness.run_safe) else harness.run
-        run_cmd = list(base) + extra_args
-
-    print(f"Starting devcontainer (instance {instance_id}, harness {harness.name})...")
+    print(f"Starting devcontainer (instance {instance_id}, command: {' '.join(run_cmd)})...")
 
     up_cmd = devcontainer_cmd + [
         "up",
@@ -454,33 +550,37 @@ def pull_docker_image_if_needed() -> None:
 
 def main() -> None:
     """
-    Main entry point - runs a coding agent (harness) in a sandboxed devcontainer.
+    Main entry point - runs a command (the harness) in a sandboxed devcontainer.
+
+    The command is whatever the user types after ltd's own options:
+    `ltd [ltd-opts] <command...>`. With no command, defaults to claude.
 
     Uses embedded devcontainer files from the package.
     With --build, builds from Dockerfile. Without, uses pre-built image.
     """
     parser = create_parser()
-    args, extra_args = parser.parse_known_args()
+    args = parser.parse_args()
 
-    # Detect whether the user explicitly engaged the proxy feature (via flags or
-    # env) BEFORE apply_env_defaults coalesces everything to defaults. This keeps
-    # the bare-default case (plain `claude`, no proxy) behaving exactly as before:
-    # no provider env is injected and the proxy URL stays unset.
+    # Detect whether the user explicitly engaged the proxy feature (via flags,
+    # env, or by giving an explicit command) BEFORE apply_env_defaults coalesces
+    # everything to defaults. This keeps the bare-default case (plain `ltd`, no
+    # command, no proxy) behaving exactly as before: no provider env is injected
+    # and the proxy URL stays unset, so it just runs claude.
     proxy_engaged = any(
         [
             args.proxy_url is not None,
             args.model is not None,
-            args.harness is not None,
+            bool(args.command),
             os.environ.get("LTD_PROXY_URL"),
             os.environ.get("LTD_MODEL"),
-            os.environ.get("LTD_HARNESS"),
         ]
     )
 
     apply_env_defaults(args)
 
-    # Resolve the harness (known name or raw command).
-    harness = harness_mod.resolve(args.harness)
+    # Record any package-runner command (npx/uvx/etc.) to the cache-freshness
+    # manifest so the trusted nightly refresh can warm it ahead of time.
+    record_manifest(args.command)
 
     # Determine the proxy URL. When the proxy is engaged but no explicit URL was
     # given, default to the host bridge gateway (reached via --add-host below).
@@ -525,6 +625,12 @@ def main() -> None:
     runtime_dir = Path.home() / ".claude" / "lamp-the-djinn-runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
 
+    # Ensure the writable credential-persistence dir exists on the host before
+    # we bind-mount it into the cage. Contents are readable by the untrusted
+    # agent, so only scoped/revocable credentials belong here (see README).
+    auth_dir = Path.home() / ".cache" / "lamp-the-djinn" / "auth"
+    auth_dir.mkdir(parents=True, exist_ok=True)
+
     # Load and modify config
     config = json.loads(source_config.read_text())
     config = modify_config(
@@ -533,7 +639,6 @@ def main() -> None:
         runtime_dir,
         devcontainer_dir,
         project_dir,
-        harness=harness,
         proxy_url=proxy_url,
         model=args.model,
         proxy_api_key=args.proxy_api_key,
@@ -548,11 +653,10 @@ def main() -> None:
         runtime_config,
         cache_dir,
         project_dir,
-        extra_args,
+        args.command,
         args.shell,
         args.safe_mode,
         instance_id,
-        harness=harness,
     )
 
 

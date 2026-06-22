@@ -1,9 +1,10 @@
-"""Harness registry: the coding agent that runs *inside* the cage.
+"""Provider env injection: wiring whatever runs *inside* the cage to the proxy.
 
 A "harness" is the agent program executed in the sandboxed devcontainer (Claude
-Code, Codex, Aider, or an arbitrary command). lamp-the-djinn is harness-agnostic:
-the agent is selectable and auto-configured to talk to the LiteLLM proxy on the
-host.
+Code, Codex, Aider, or any arbitrary command the user types). lamp-the-djinn is
+harness-agnostic: it does not maintain a registry of known agents. The command
+is whatever the user passes through on the CLI; this module's only job is to
+hand that command the env vars it needs to reach the LiteLLM proxy on the host.
 
 Provider seam
 -------------
@@ -13,104 +14,46 @@ provider directly. The proxy abstracts away *which* backend serves a request:
 fans out to OpenRouter. The harness neither knows nor cares; it only sees a
 base URL and an API key.
 
-Two wire formats are in play:
+Because the command is arbitrary, we cannot know in advance whether it speaks
+the OpenAI chat-completions wire format or the Anthropic Messages format. So we
+inject BOTH provider families and let the harness pick up whichever it reads:
 
-* ``provider="openai"`` harnesses (Codex, Aider, custom) speak the OpenAI
-  chat-completions format and use the proxy's ``/v1`` endpoint.
-* ``provider="anthropic"`` harnesses (Claude Code) speak the Anthropic Messages
-  format. LiteLLM must therefore expose its *anthropic-format* passthrough
-  endpoint for these; ``ANTHROPIC_BASE_URL`` should point at that endpoint so
-  Claude Code's native ``/v1/messages`` calls are translated to whatever backend
-  the chosen model maps to.
+* OpenAI family (Codex, Aider, custom): ``OPENAI_BASE_URL``, ``OPENAI_API_KEY``,
+  ``OPENAI_MODEL`` -- pointed at the proxy's ``/v1`` (OpenAI-format) endpoint.
+* Anthropic family (Claude Code): ``ANTHROPIC_BASE_URL``,
+  ``ANTHROPIC_AUTH_TOKEN``, ``ANTHROPIC_MODEL``.
+
+NOTE on ``ANTHROPIC_BASE_URL``: Claude Code's native ``/v1/messages`` calls
+speak the Anthropic Messages format, which LiteLLM exposes on its
+*anthropic-format* passthrough endpoint. That endpoint may live at a DIFFERENT
+path than the ``/v1`` OpenAI-compatible one. We default ``ANTHROPIC_BASE_URL``
+to the same proxy URL for convenience, but allow an explicit override via the
+``LTD_ANTHROPIC_PROXY_URL`` env var when LiteLLM's anthropic path differs.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
 
 
-@dataclass(frozen=True)
-class Harness:
-    """A coding agent that can run inside the cage.
+def provider_env_all(proxy_url: str, model: str, api_key: str) -> dict[str, str]:
+    """Build env vars wiring an arbitrary harness at the LiteLLM proxy.
 
-    Attributes:
-        name: Short identifier (registry key).
-        run: In-container command, auto-approve / non-interactive variant.
-        run_safe: Optional variant *without* auto-approve (permission prompts on).
-            ``None`` means the harness has no distinct safe mode.
-        provider: Wire format / credential shape: "openai" or "anthropic".
-        description: Human-readable one-liner.
+    Returns BOTH provider families pointing at the proxy, so the same env works
+    whether the command speaks the OpenAI or the Anthropic wire format. The
+    proxy abstracts local-llama-vs-OpenRouter behind one endpoint, so the same
+    three knobs (base URL, key, model) configure every backend.
+
+    The Anthropic base URL defaults to ``proxy_url`` but honors an
+    ``LTD_ANTHROPIC_PROXY_URL`` override, because LiteLLM's anthropic-format
+    endpoint may differ from the ``/v1`` OpenAI path (see module docstring).
     """
-
-    name: str
-    run: list[str]
-    provider: str
-    description: str = ""
-    run_safe: list[str] | None = None
-
-
-# Registry of known harnesses. Add new agents here.
-HARNESSES: dict[str, Harness] = {
-    "claude": Harness(
-        name="claude",
-        run=["claude", "--dangerously-skip-permissions"],
-        run_safe=["claude"],
-        provider="anthropic",
-        description="Anthropic Claude Code (default).",
-    ),
-    "codex": Harness(
-        name="codex",
-        # Best-effort flags: `codex exec --full-auto` runs non-interactively with
-        # auto-approval. Exact flag names drift between Codex releases -- tune if
-        # the agent errors on startup (e.g. `--dangerously-bypass-approvals`).
-        run=["npx", "-y", "@openai/codex", "exec", "--full-auto"],
-        provider="openai",
-        description="OpenAI Codex CLI.",
-    ),
-    "aider": Harness(
-        name="aider",
-        run=["uvx", "aider", "--yes-always"],
-        provider="openai",
-        description="Aider pair-programming agent.",
-    ),
-}
-
-
-def provider_env(h: Harness, proxy_url: str, model: str, api_key: str) -> dict[str, str]:
-    """Build the env vars that point a harness at the LiteLLM proxy.
-
-    The proxy abstracts local-llama-vs-OpenRouter behind one endpoint, so the
-    same three knobs (base URL, key, model) configure every backend. For
-    ``provider="anthropic"`` the ``proxy_url`` must be LiteLLM's anthropic-format
-    endpoint (see module docstring).
-    """
-    if h.provider == "openai":
-        return {
-            "OPENAI_BASE_URL": proxy_url,
-            "OPENAI_API_KEY": api_key,
-            "OPENAI_MODEL": model,
-        }
-    if h.provider == "anthropic":
-        return {
-            "ANTHROPIC_BASE_URL": proxy_url,
-            "ANTHROPIC_AUTH_TOKEN": api_key,
-            "ANTHROPIC_MODEL": model,
-        }
-    raise ValueError(f"unknown provider {h.provider!r} for harness {h.name!r}")
-
-
-def resolve(name_or_cmd: str) -> Harness:
-    """Resolve a harness by registry name, or treat the string as a raw command.
-
-    If ``name_or_cmd`` is a known harness name, return it. Otherwise wrap the
-    string as a shell command run via ``bash -lc`` and assume the OpenAI wire
-    format (the broadest-compatible default for arbitrary agents).
-    """
-    if name_or_cmd in HARNESSES:
-        return HARNESSES[name_or_cmd]
-    return Harness(
-        name="custom",
-        run=["bash", "-lc", name_or_cmd],
-        provider="openai",
-        description=f"Custom command: {name_or_cmd}",
-    )
+    anthropic_url = os.environ.get("LTD_ANTHROPIC_PROXY_URL") or proxy_url
+    return {
+        "OPENAI_BASE_URL": proxy_url,
+        "OPENAI_API_KEY": api_key,
+        "OPENAI_MODEL": model,
+        "ANTHROPIC_BASE_URL": anthropic_url,
+        "ANTHROPIC_AUTH_TOKEN": api_key,
+        "ANTHROPIC_MODEL": model,
+    }

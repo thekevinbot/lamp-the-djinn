@@ -357,8 +357,13 @@ def run_claude(
     claude_args: list[str],
     timeout: int = 120,
 ) -> subprocess.CompletedProcess:
-    """Run lamp-the-djinn with claude (not --shell) in a given project directory."""
-    cmd = ["uv", "run", "lamp-the-djinn"] + claude_args
+    """Run lamp-the-djinn with claude (not --shell) in a given project directory.
+
+    The command is now explicit pass-through: everything after ltd's own options
+    is the in-cage command. So claude flags must follow an explicit `claude`
+    token (e.g. `ltd claude -p "..."`); ltd no longer infers the harness.
+    """
+    cmd = ["uv", "run", "lamp-the-djinn", "claude"] + claude_args
 
     return subprocess.run(
         cmd,

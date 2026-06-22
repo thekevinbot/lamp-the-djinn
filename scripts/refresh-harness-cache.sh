@@ -17,6 +17,7 @@
 set -euo pipefail
 
 CACHE_DIR="${HOME}/.cache/lamp-the-djinn/harness-cache"
+MANIFEST="${HOME}/.cache/lamp-the-djinn/harness-manifest.txt"
 COOLDOWN_DAYS="${LTD_COOLDOWN_DAYS:-3}"
 CUTOFF="$(date -u -d "${COOLDOWN_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -51,6 +52,53 @@ if command -v npm >/dev/null 2>&1; then
     || echo "warn: npm install @openai/codex @devcontainers/cli failed (before ${CUTOFF})"
 else
   echo "warn: npm not found on PATH; skipping npm-based harnesses"
+fi
+
+# --- manifest-driven harnesses ----------------------------------------------
+# ltd records the package specs users actually invoke (npx/uvx/...) to
+# ${MANIFEST}, one spec per line. Warm each here with the same cooldown logic.
+# Heuristic: a leading '@' (scoped) or a name containing '/' is npm; otherwise
+# try uv first then npm best-effort. Blank lines and '#' comments are skipped.
+warm_uv() {
+  local spec="$1"
+  if command -v uv >/dev/null 2>&1; then
+    UV_CACHE_DIR="${UV_CACHE}" uv tool install --exclude-newer "${CUTOFF}" "${spec}" \
+      && return 0
+  fi
+  return 1
+}
+
+warm_npm() {
+  local spec="$1"
+  if command -v npm >/dev/null 2>&1; then
+    npm_config_cache="${NPM_CACHE}" npm install --prefix "${NPM_PREFIX}" \
+      --before "${CUTOFF}" "${spec}" \
+      && return 0
+  fi
+  return 1
+}
+
+if [[ -f "${MANIFEST}" ]]; then
+  echo "refresh-harness-cache: warming manifest entries from ${MANIFEST}"
+  while IFS= read -r spec || [[ -n "${spec}" ]]; do
+    # Trim whitespace.
+    spec="${spec#"${spec%%[![:space:]]*}"}"
+    spec="${spec%"${spec##*[![:space:]]}"}"
+    [[ -z "${spec}" ]] && continue
+    [[ "${spec}" == \#* ]] && continue
+
+    echo "refresh-harness-cache: manifest spec '${spec}'"
+    if [[ "${spec}" == @* || "${spec}" == */* ]]; then
+      # Scoped or namespaced name -> npm-flavored.
+      warm_npm "${spec}" || echo "warn: failed to warm '${spec}' via npm"
+    else
+      # Plain name: prefer uv (Python), fall back to npm best-effort.
+      warm_uv "${spec}" || warm_npm "${spec}" \
+        || echo "warn: failed to warm '${spec}' via uv or npm"
+    fi
+  done < "${MANIFEST}"
+else
+  echo "refresh-harness-cache: no manifest at ${MANIFEST}; skipping manifest warm"
 fi
 
 echo "refresh-harness-cache: done."

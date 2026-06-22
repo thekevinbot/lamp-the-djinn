@@ -121,16 +121,16 @@ def describe_workspace_mounting():
     """Tests for workspace directory mounting."""
 
     @pytest.mark.integration
-    def it_mounts_local_directory_to_workspace(workspace_path: Path):
-        """Verify that the local directory is mounted at /workspace in the container."""
+    def it_mounts_local_directory_at_its_own_path(workspace_path: Path):
+        """The local dir mounts at its OWN host path inside the cage (path identity)."""
         # Create a unique file in the temp directory
-        marker = f"clanker-test-{uuid.uuid4()}"
+        marker = f"ltd-test-{uuid.uuid4()}"
         marker_file = workspace_path / "test-marker.txt"
         marker_file.write_text(marker)
         marker_file.chmod(0o644)  # Readable by container's node user
 
-        # Run lamp-the-djinn and check if the file exists in /workspace
-        result = run_clanker(workspace_path, "cat /workspace/test-marker.txt")
+        # Inside the cage the path is identical to the host path.
+        result = run_clanker(workspace_path, f"cat {workspace_path}/test-marker.txt")
 
         assert result.returncode == 0, f"Command failed: {result.stderr}"
         assert marker in result.stdout, f"Expected marker '{marker}' not found in output: {result.stdout}"
@@ -145,7 +145,7 @@ def describe_workspace_mounting():
         workspace_path.chmod(0o777)
 
         # Write a file from inside the container
-        result = run_clanker(workspace_path, f"echo '{marker}' > /workspace/{output_file}")
+        result = run_clanker(workspace_path, f"echo '{marker}' > {workspace_path}/{output_file}")
 
         assert result.returncode == 0, f"Command failed: {result.stderr}"
 
@@ -162,18 +162,18 @@ def describe_workspace_mounting():
         script.chmod(0o755)
 
         # Check the file is executable inside the container
-        result = run_clanker(workspace_path, "test -x /workspace/test-script.sh && echo 'executable'")
+        result = run_clanker(workspace_path, f"test -x {workspace_path}/test-script.sh && echo 'executable'")
 
         assert result.returncode == 0, f"Command failed: {result.stderr}"
         assert "executable" in result.stdout, f"File not executable in container: {result.stdout}"
 
     @pytest.mark.integration
     def it_shows_correct_working_directory(workspace_path: Path):
-        """Verify that pwd shows /workspace."""
+        """pwd shows the real host path (path identity), not /workspace."""
         result = run_clanker(workspace_path, "pwd")
 
         assert result.returncode == 0, f"Command failed: {result.stderr}"
-        assert "/workspace" in result.stdout, f"Expected /workspace, got: {result.stdout}"
+        assert str(workspace_path) in result.stdout, f"Expected {workspace_path}, got: {result.stdout}"
 
 
 def describe_installed_tools():

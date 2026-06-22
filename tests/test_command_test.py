@@ -178,6 +178,51 @@ def describe_dual_env_injection():
         assert "readonly" not in auth_mount
 
 
+def describe_path_identity_mounts():
+    """Host dirs mount at their own paths inside the cage (path identity)."""
+
+    def it_mounts_the_project_at_its_own_path(tmp_path: Path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        config = modify_config(
+            {"mounts": [], "runArgs": []},
+            _bare_args(),
+            tmp_path,
+            project_dir=proj,
+        )
+        # target == source == the real host path, not /workspace.
+        assert config["workspaceMount"] == (f"source={proj},target={proj},type=bind,consistency=delegated")
+        assert config["workspaceFolder"] == str(proj)
+        assert "/workspace" not in config["workspaceMount"]
+
+    def it_identity_mounts_a_bare_volume_path(tmp_path: Path):
+        d = tmp_path / "bertha" / "app"
+        d.mkdir(parents=True)
+        args = _bare_args()
+        args.volume = [str(d)]
+        config = modify_config({"mounts": [], "runArgs": []}, args, tmp_path)
+        resolved = str(Path(str(d)).resolve())
+        assert f"{resolved}:{resolved}" in config["runArgs"]
+
+    def it_preserves_an_explicit_host_colon_container_volume(tmp_path: Path):
+        args = _bare_args()
+        args.volume = ["/h/data:/container/data"]
+        config = modify_config({"mounts": [], "runArgs": []}, args, tmp_path)
+        assert "/h/data:/container/data" in config["runArgs"]
+
+    def it_mounts_multiple_volumes(tmp_path: Path):
+        a = tmp_path / "a"
+        b = tmp_path / "b"
+        a.mkdir()
+        b.mkdir()
+        args = _bare_args()
+        args.volume = [str(a), str(b)]
+        config = modify_config({"mounts": [], "runArgs": []}, args, tmp_path)
+        for d in (a, b):
+            r = str(Path(str(d)).resolve())
+            assert f"{r}:{r}" in config["runArgs"]
+
+
 def describe_record_manifest():
     """Conservative package-spec extraction from package-runner commands."""
 

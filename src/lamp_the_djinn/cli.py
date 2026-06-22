@@ -118,9 +118,12 @@ def modify_config(
         config.pop("image", None)
         config["build"] = {"dockerfile": "Dockerfile", "context": "."}
 
-    # Mount the actual project directory (where user ran lamp-the-djinn from)
+    # Mount the project at its OWN host path (path identity), so absolute paths the
+    # agent emits (code, configs, logs, commits) stay valid on the host -- no
+    # /workspace remap that makes agents hallucinate /app-style paths.
     if project_dir:
-        config["workspaceMount"] = f"source={project_dir},target=/workspace,type=bind,consistency=delegated"
+        config["workspaceMount"] = f"source={project_dir},target={project_dir},type=bind,consistency=delegated"
+        config["workspaceFolder"] = str(project_dir)
 
     # Replace .claude docker volume with read-only bind mount for security
     # This prevents container from modifying settings, hooks, or stealing API keys
@@ -199,8 +202,12 @@ def modify_config(
                 port_mapping = f"{port_mapping}:{port_mapping}"
             config["runArgs"].extend(["-p", port_mapping])
     if args.volume:
-        for volume_mapping in args.volume:
-            config["runArgs"].extend(["-v", volume_mapping])
+        for vol in args.volume:
+            # Path identity: a bare path mounts at its own path inside the cage
+            # (`/mnt/x` -> `/mnt/x`), read-write and live. An explicit
+            # `host:container` mapping is honored as-is. Repeat -v for multiple dirs.
+            mapping = vol if ":" in vol else f"{Path(vol).resolve()}:{Path(vol).resolve()}"
+            config["runArgs"].extend(["-v", mapping])
     if args.env:
         for env_var in args.env:
             config["runArgs"].extend(["-e", env_var])
@@ -377,8 +384,9 @@ def create_parser() -> argparse.ArgumentParser:
         "-v",
         "--volume",
         action="append",
-        metavar="HOST:CONTAINER",
-        help="Mount a volume (can be specified multiple times)",
+        metavar="DIR",
+        help="Mount a host dir into the cage at its OWN path (identity), e.g. "
+        "-v /mnt/bertha/app; or HOST:CONTAINER for an explicit target. Repeatable.",
     )
     parser.add_argument(
         "-e",

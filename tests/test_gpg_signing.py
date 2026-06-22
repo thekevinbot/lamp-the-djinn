@@ -8,7 +8,6 @@ These tests verify that:
 """
 
 import pytest
-
 from conftest import DevContainer
 
 
@@ -21,9 +20,7 @@ def describe_gpg_signing():
         # Check commit.gpgsign is true
         result = devcontainer.exec("git config --global commit.gpgsign", timeout=10)
         assert result.returncode == 0, f"commit.gpgsign not configured: {result.stderr}"
-        assert result.stdout.strip() == "true", (
-            f"Expected commit.gpgsign=true, got '{result.stdout.strip()}'"
-        )
+        assert result.stdout.strip() == "true", f"Expected commit.gpgsign=true, got '{result.stdout.strip()}'"
 
     @pytest.mark.integration
     def test_gpg_signing_key_is_set(devcontainer: DevContainer):

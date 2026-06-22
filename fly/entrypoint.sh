@@ -22,7 +22,6 @@ if command -v tailscaled >/dev/null 2>&1; then
         --socket=/var/run/tailscale/tailscaled.sock \
         --tun=userspace-networking \
         >/var/log/tailscaled.log 2>&1 &
-    TAILSCALED_PID=$!
 
     # Give the daemon a moment to open its control socket.
     sleep 2

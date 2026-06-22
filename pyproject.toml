@@ -36,17 +36,61 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-describe>=2.2.0",
     "pytest-watcher>=0.4.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.13.0",
+    "mypy>=1.11.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-python_files = ["test_*.py"]
+# Accept both classic test_*.py and colocated *_test.py unit tests.
+python_files = ["test_*.py", "*_test.py"]
 python_functions = ["test_* describe_*"]
+# Treat async tests as asyncio without per-test markers (pytest-asyncio).
+asyncio_mode = "auto"
 addopts = [
     "-v",
     "--tb=short",
     "--strict-markers",
 ]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+# deprecated/ is a frozen legacy tree -- never lint or reformat it.
+extend-exclude = ["deprecated"]
+
+[tool.ruff.lint]
+# E/F: pycodestyle + pyflakes; I: import sorting; UP: pyupgrade; B: bugbear.
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests favor readability over lint purity (assert-heavy, fixtures, long lines).
+"tests/**" = ["E501", "B011", "B017"]
+# Legacy tree stays lenient even if it is ever re-included.
+"deprecated/**" = ["ALL"]
+
+[tool.mypy]
+python_version = "3.10"
+# Lenient to start: this is legacy code; tighten later (see internals/python/testing.md).
+ignore_missing_imports = true
+check_untyped_defs = false
+# Only type-check the shipped package; deprecated/ and tests are out of scope.
+files = ["src/lamp_the_djinn"]
+exclude = ["deprecated/"]
+
+[tool.coverage.run]
+branch = true
+source = ["src/lamp_the_djinn"]
+# The devcontainer/* tree is shipped data (shell, Dockerfile, json), not Python.
+omit = ["src/lamp_the_djinn/devcontainer/*"]
+
+[tool.coverage.report]
+# Aspirational target. NOT enforced here: most tests need Docker and are skipped
+# in unit CI, so a hard gate would falsely fail. Enable once unit coverage is
+# representative.
+# fail_under = 85
+show_missing = true
 
 [build-system]
 requires = ["hatchling"]

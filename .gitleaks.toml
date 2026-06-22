@@ -1,0 +1,23 @@
+# gitleaks config -- on-theme for this project (credential isolation).
+# Extends the built-in default rule set and adds an allowlist for the
+# known, intentional false positives in this repo.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known intentional placeholders and config/doc references in lamp-the-djinn"
+
+# Match by file path: the .env template ships an empty placeholder key.
+paths = [
+  '''\.env\.example$''',
+]
+
+# Match by content regex: documented env-var *names* and placeholder values
+# are not secrets. The real key lives only in the gitignored .env on the host.
+regexes = [
+  # The GitHub noreply email used by the bot identity in deprecated docs.
+  '''248217931\+clankerbot@users\.noreply\.github\.com''',
+  # Env-var names referenced in docs/config -- names, not values.
+  '''OPENROUTER_API_KEY''',
+  '''LTD_[A-Z_]+''',
+]

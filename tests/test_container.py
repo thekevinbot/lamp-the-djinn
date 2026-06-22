@@ -8,7 +8,6 @@ These tests verify that:
 """
 
 import pytest
-
 from conftest import DevContainer
 
 
@@ -39,9 +38,7 @@ def describe_container():
         """Verify that the container runs as a non-root user."""
         result = devcontainer.exec("whoami", timeout=10)
         assert result.returncode == 0
-        assert result.stdout.strip() == "node", (
-            f"Expected user 'node', got '{result.stdout.strip()}'"
-        )
+        assert result.stdout.strip() == "node", f"Expected user 'node', got '{result.stdout.strip()}'"
 
     @pytest.mark.integration
     def it_has_firewall_initialized(devcontainer: DevContainer):
@@ -52,9 +49,7 @@ def describe_container():
             timeout=10,
         )
         assert result.returncode == 0, f"ipset not configured: {result.stderr}"
-        assert "allowed-domains" in result.stdout, (
-            f"allowed-domains ipset not found: {result.stdout}"
-        )
+        assert "allowed-domains" in result.stdout, f"allowed-domains ipset not found: {result.stdout}"
 
     @pytest.mark.integration
     def it_has_iptables_rules(devcontainer: DevContainer):

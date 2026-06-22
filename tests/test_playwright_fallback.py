@@ -13,6 +13,7 @@ This test:
 import subprocess
 import tempfile
 from pathlib import Path
+
 import pytest
 
 
@@ -36,21 +37,17 @@ def describe_playwright_fallback():
             claude_dir = Path.home() / ".claude" / ".devcontainer"
             config = claude_dir / "devcontainer.json"
 
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print("Testing Playwright Fallback Integration...")
-            print("="*60)
+            print("=" * 60)
 
             # Given: A running devcontainer
             print("\nStep 1: Starting devcontainer...")
             with tempfile.TemporaryDirectory() as tmpdir:
                 result = subprocess.run(
-                    [
-                        "npx", "-y", "@devcontainers/cli", "up",
-                        "--workspace-folder", tmpdir,
-                        "--config", str(config)
-                    ],
+                    ["npx", "-y", "@devcontainers/cli", "up", "--workspace-folder", tmpdir, "--config", str(config)],
                     capture_output=True,
-                    text=True
+                    text=True,
                 )
 
                 assert result.returncode == 0, f"Failed to start container: {result.stderr}"
@@ -62,15 +59,22 @@ def describe_playwright_fallback():
 
                 process = subprocess.Popen(
                     [
-                        "npx", "-y", "@devcontainers/cli", "exec",
-                        "--workspace-folder", tmpdir,
-                        "--config", str(config),
-                        "claude", "--dangerously-skip-permissions", "--debug"
+                        "npx",
+                        "-y",
+                        "@devcontainers/cli",
+                        "exec",
+                        "--workspace-folder",
+                        tmpdir,
+                        "--config",
+                        str(config),
+                        "claude",
+                        "--dangerously-skip-permissions",
+                        "--debug",
                     ],
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
-                    text=True
+                    text=True,
                 )
 
                 stdout, _ = process.communicate(input=test_prompt, timeout=60)
@@ -102,7 +106,10 @@ def describe_playwright_fallback():
 
                 # And: Playwright fallback should be triggered
                 assert any(
-                    any(term in line.lower() for term in ["playwright", "npx", "tsx", "web.ts", "webfetch failed, but playwright"])
+                    any(
+                        term in line.lower()
+                        for term in ["playwright", "npx", "tsx", "web.ts", "webfetch failed, but playwright"]
+                    )
                     for line in stdout.splitlines()
                 ), "✗ Playwright fallback was NOT triggered"
                 print("✓ Playwright fallback triggered after WebFetch failure")
@@ -115,13 +122,13 @@ def describe_playwright_fallback():
                 print("✓ Content retrieved successfully via Playwright")
 
                 # Summary
-                print("\n" + "="*60)
+                print("\n" + "=" * 60)
                 print("✓ Playwright Fallback Test PASSED")
-                print("="*60)
+                print("=" * 60)
                 print("\nSummary:")
                 print("1. WebFetch attempted: YES")
                 print("2. WebFetch failed: YES (as expected)")
                 print("3. Playwright fallback triggered: YES")
                 print("4. Content retrieved successfully: YES")
                 print("\nThis verifies the complete failure → fallback → success flow.")
-                print("="*60 + "\n")
+                print("=" * 60 + "\n")

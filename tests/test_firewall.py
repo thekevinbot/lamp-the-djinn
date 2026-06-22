@@ -8,7 +8,6 @@ These tests verify that:
 """
 
 import pytest
-
 from conftest import DevContainer
 
 
@@ -24,9 +23,7 @@ def describe_firewall():
             timeout=15,
         )
         # Should fail - either connection refused or timeout
-        assert result.returncode != 0, (
-            f"Expected blocked domain to fail, but curl succeeded: {result.stdout}"
-        )
+        assert result.returncode != 0, f"Expected blocked domain to fail, but curl succeeded: {result.stdout}"
 
     @pytest.mark.integration
     def it_allows_whitelisted_domains(devcontainer: DevContainer):
@@ -36,9 +33,7 @@ def describe_firewall():
             "curl --connect-timeout 10 -s https://api.github.com/zen",
             timeout=20,
         )
-        assert result.returncode == 0, (
-            f"Expected whitelisted domain to succeed: {result.stderr}"
-        )
+        assert result.returncode == 0, f"Expected whitelisted domain to succeed: {result.stderr}"
         # GitHub zen endpoint returns a random quote
         assert len(result.stdout.strip()) > 0, "Expected non-empty response from GitHub"
 
@@ -58,18 +53,14 @@ def describe_firewall():
             "sudo /usr/local/bin/add-domain-to-firewall.sh httpbin.org",
             timeout=30,
         )
-        assert result.returncode == 0, (
-            f"Failed to add domain to firewall: {result.stderr}"
-        )
+        assert result.returncode == 0, f"Failed to add domain to firewall: {result.stderr}"
 
         # Now it should work
         result = devcontainer.exec(
             "curl --connect-timeout 10 -s https://httpbin.org/get",
             timeout=20,
         )
-        assert result.returncode == 0, (
-            f"Domain should be accessible after approval: {result.stderr}"
-        )
+        assert result.returncode == 0, f"Domain should be accessible after approval: {result.stderr}"
 
         # Verify we got valid JSON back
         assert '"url"' in result.stdout, "Expected JSON response from httpbin"

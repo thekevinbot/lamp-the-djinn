@@ -57,8 +57,7 @@ def detect_runtime(preferred: str) -> str:
         return preferred
 
     print(
-        f"Warning: requested isolation runtime '{preferred}' is not registered "
-        f"with Docker; falling back to 'runc'.",
+        f"Warning: requested isolation runtime '{preferred}' is not registered with Docker; falling back to 'runc'.",
         file=sys.stderr,
     )
     return "runc"
@@ -130,17 +129,16 @@ def modify_config(
         config["mounts"] = [
             m.replace(
                 "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume",
-                "source=${localEnv:HOME}/.claude,target=/home/node/.claude,type=bind,readonly"
-            ) if "claude-code-config" in m else m
+                "source=${localEnv:HOME}/.claude,target=/home/node/.claude,type=bind,readonly",
+            )
+            if "claude-code-config" in m
+            else m
             for m in config["mounts"]
         ]
 
     # Filter out existing SSH and GPG mounts
     if "mounts" in config:
-        config["mounts"] = [
-            m for m in config["mounts"]
-            if ".ssh/" not in m and ".gnupg" not in m
-        ]
+        config["mounts"] = [m for m in config["mounts"] if ".ssh/" not in m and ".gnupg" not in m]
 
     # Add SSH mounts if key provided
     if args.ssh_key_file:
@@ -149,19 +147,13 @@ def modify_config(
         ssh_config_path = generate_ssh_config(runtime_dir, ssh_key_name)
 
         config.setdefault("mounts", [])
-        config["mounts"].append(
-            f"source={ssh_key_path},target=/home/node/.ssh/{ssh_key_name},type=bind,readonly"
-        )
-        config["mounts"].append(
-            f"source={ssh_config_path},target=/home/node/.ssh/config,type=bind,readonly"
-        )
+        config["mounts"].append(f"source={ssh_key_path},target=/home/node/.ssh/{ssh_key_name},type=bind,readonly")
+        config["mounts"].append(f"source={ssh_config_path},target=/home/node/.ssh/config,type=bind,readonly")
 
     # Add GPG mount if key ID provided
     if args.gpg_key_id:
         config.setdefault("mounts", [])
-        config["mounts"].append(
-            "source=${localEnv:HOME}/.gnupg,target=/home/node/.gnupg,type=bind,readonly"
-        )
+        config["mounts"].append("source=${localEnv:HOME}/.gnupg,target=/home/node/.gnupg,type=bind,readonly")
 
     # Read-only harness cache mount (only when the proxy/harness feature is engaged).
     # The trusted nightly refresh (scripts/refresh-harness-cache.sh) runs on the
@@ -242,35 +234,66 @@ def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     parser = argparse.ArgumentParser(
         description="Run a coding agent in a sandboxed devcontainer",
-        epilog="Any additional arguments are passed to the harness."
+        epilog="Any additional arguments are passed to the harness.",
     )
     parser.add_argument("--ssh-key-file", help="Path to SSH private key")
     parser.add_argument("--git-user-name", help="Git user.name")
     parser.add_argument("--git-user-email", help="Git user.email")
     parser.add_argument("--gh-token", help="GitHub token")
     parser.add_argument("--gpg-key-id", help="GPG key ID for signing")
-    parser.add_argument("--build", action="store_true", help="Build from local Dockerfile instead of using pre-built image")
-    parser.add_argument("--harness", default=None,
-                        help="Coding agent to run: a known name (claude, codex, aider) or a raw shell command. Default: claude")
-    parser.add_argument("--model", default=None,
-                        help="Model name passed to the harness via the LiteLLM proxy (default: local)")
-    parser.add_argument("--proxy-url", default=None,
-                        help="LiteLLM proxy base URL. If set, the harness is wired to it. "
-                             "Defaults to http://host.docker.internal:4000/v1 when a proxy is in use")
-    parser.add_argument("--runtime", default=None,
-                        help="OCI isolation runtime for Docker (the isolation seam): "
-                             "'auto' (default, uses gVisor/runsc when installed else runc), "
-                             "or a concrete name like 'runsc', 'kata-runtime', 'runc'. "
-                             "Env: LTD_RUNTIME")
+    parser.add_argument(
+        "--build", action="store_true", help="Build from local Dockerfile instead of using pre-built image"
+    )
+    parser.add_argument(
+        "--harness",
+        default=None,
+        help="Coding agent to run: a known name (claude, codex, aider) or a raw shell command. Default: claude",
+    )
+    parser.add_argument(
+        "--model", default=None, help="Model name passed to the harness via the LiteLLM proxy (default: local)"
+    )
+    parser.add_argument(
+        "--proxy-url",
+        default=None,
+        help="LiteLLM proxy base URL. If set, the harness is wired to it. "
+        "Defaults to http://host.docker.internal:4000/v1 when a proxy is in use",
+    )
+    parser.add_argument(
+        "--runtime",
+        default=None,
+        help="OCI isolation runtime for Docker (the isolation seam): "
+        "'auto' (default, uses gVisor/runsc when installed else runc), "
+        "or a concrete name like 'runsc', 'kata-runtime', 'runc'. "
+        "Env: LTD_RUNTIME",
+    )
     parser.add_argument("--shell", metavar="CMD", help="Run a shell command instead of the harness (for testing)")
-    parser.add_argument("--safe-mode", action="store_true", help="Run the harness with permission prompts enabled (more interruptions, extra safety)")
+    parser.add_argument(
+        "--safe-mode",
+        action="store_true",
+        help="Run the harness with permission prompts enabled (more interruptions, extra safety)",
+    )
     # Docker run flags - passed directly to runArgs
-    parser.add_argument("-p", "--port", action="append", metavar="HOST:CONTAINER",
-                        help="Map a port from host to container (can be specified multiple times)")
-    parser.add_argument("-v", "--volume", action="append", metavar="HOST:CONTAINER",
-                        help="Mount a volume (can be specified multiple times)")
-    parser.add_argument("-e", "--env", action="append", metavar="VAR=VALUE",
-                        help="Set environment variable (can be specified multiple times)")
+    parser.add_argument(
+        "-p",
+        "--port",
+        action="append",
+        metavar="HOST:CONTAINER",
+        help="Map a port from host to container (can be specified multiple times)",
+    )
+    parser.add_argument(
+        "-v",
+        "--volume",
+        action="append",
+        metavar="HOST:CONTAINER",
+        help="Mount a volume (can be specified multiple times)",
+    )
+    parser.add_argument(
+        "-e",
+        "--env",
+        action="append",
+        metavar="VAR=VALUE",
+        help="Set environment variable (can be specified multiple times)",
+    )
     return parser
 
 
@@ -291,7 +314,16 @@ def apply_env_defaults(args: argparse.Namespace) -> None:
     args.runtime = args.runtime or os.environ.get("LTD_RUNTIME") or "auto"
 
 
-def run_devcontainer(config_path: Path, workspace_dir: Path, project_dir: Path, extra_args: list[str], shell_cmd: str | None = None, safe_mode: bool = False, instance_id: str | None = None, harness: "harness_mod.Harness | None" = None) -> None:
+def run_devcontainer(
+    config_path: Path,
+    workspace_dir: Path,
+    project_dir: Path,
+    extra_args: list[str],
+    shell_cmd: str | None = None,
+    safe_mode: bool = False,
+    instance_id: str | None = None,
+    harness: "harness_mod.Harness | None" = None,
+) -> None:
     """Run the devcontainer with the selected harness or a shell command.
 
     Each invocation uses a unique instance ID for both the config directory
@@ -318,19 +350,29 @@ def run_devcontainer(config_path: Path, workspace_dir: Path, project_dir: Path, 
 
     up_cmd = devcontainer_cmd + [
         "up",
-        "--workspace-folder", str(project_dir),
-        "--config", str(config_path),
-        "--id-label", id_label,
+        "--workspace-folder",
+        str(project_dir),
+        "--config",
+        str(config_path),
+        "--id-label",
+        id_label,
     ]
 
     subprocess.run(up_cmd, check=True)
 
-    exec_cmd = devcontainer_cmd + [
-        "exec",
-        "--workspace-folder", str(project_dir),
-        "--config", str(config_path),
-        "--id-label", id_label,
-    ] + run_cmd
+    exec_cmd = (
+        devcontainer_cmd
+        + [
+            "exec",
+            "--workspace-folder",
+            str(project_dir),
+            "--config",
+            str(config_path),
+            "--id-label",
+            id_label,
+        ]
+        + run_cmd
+    )
 
     # Use execvp to replace process for clean TTY passthrough
     os.execvp("npx", exec_cmd)
@@ -345,10 +387,17 @@ def get_container_info(image_name: str) -> dict:
     Returns dict with 'build_time' and 'source' keys.
     """
     result = subprocess.run(
-        ["docker", "image", "inspect", image_name, "--format",
-         '{{index .Config.Labels "org.opencontainers.image.created"}}|{{index .Config.Labels "org.opencontainers.image.source.type"}}'],
+        [
+            "docker",
+            "image",
+            "inspect",
+            image_name,
+            "--format",
+            '{{index .Config.Labels "org.opencontainers.image.created"}}|'
+            '{{index .Config.Labels "org.opencontainers.image.source.type"}}',
+        ],
         capture_output=True,
-        text=True
+        text=True,
     )
     if result.returncode != 0:
         return {"build_time": "unknown", "source": "unknown"}
@@ -375,11 +424,7 @@ def print_container_info(image_name: str) -> None:
 
 def check_docker_accessible() -> None:
     """Check if Docker is running and accessible. Exit with error if not."""
-    result = subprocess.run(
-        ["docker", "info"],
-        capture_output=True,
-        text=True
-    )
+    result = subprocess.run(["docker", "info"], capture_output=True, text=True)
     if result.returncode != 0:
         print(
             "\n"
@@ -394,17 +439,14 @@ def check_docker_accessible() -> None:
             "║    3. You have permission to access Docker                    ║\n"
             "║       (try: sudo usermod -aG docker $USER)                    ║\n"
             "╚════════════════════════════════════════════════════════════════╝\n",
-            file=sys.stderr
+            file=sys.stderr,
         )
         sys.exit(1)
 
 
 def pull_docker_image_if_needed() -> None:
     """Pull the Docker image if not already present."""
-    result = subprocess.run(
-        ["docker", "image", "inspect", IMAGE_NAME],
-        capture_output=True
-    )
+    result = subprocess.run(["docker", "image", "inspect", IMAGE_NAME], capture_output=True)
     if result.returncode != 0:
         print("Pulling Docker image...")
         subprocess.run(["docker", "pull", IMAGE_NAME], check=True)
@@ -424,14 +466,16 @@ def main() -> None:
     # env) BEFORE apply_env_defaults coalesces everything to defaults. This keeps
     # the bare-default case (plain `claude`, no proxy) behaving exactly as before:
     # no provider env is injected and the proxy URL stays unset.
-    proxy_engaged = any([
-        args.proxy_url is not None,
-        args.model is not None,
-        args.harness is not None,
-        os.environ.get("LTD_PROXY_URL"),
-        os.environ.get("LTD_MODEL"),
-        os.environ.get("LTD_HARNESS"),
-    ])
+    proxy_engaged = any(
+        [
+            args.proxy_url is not None,
+            args.model is not None,
+            args.harness is not None,
+            os.environ.get("LTD_PROXY_URL"),
+            os.environ.get("LTD_MODEL"),
+            os.environ.get("LTD_HARNESS"),
+        ]
+    )
 
     apply_env_defaults(args)
 
@@ -484,9 +528,16 @@ def main() -> None:
     # Load and modify config
     config = json.loads(source_config.read_text())
     config = modify_config(
-        config, args, runtime_dir, devcontainer_dir, project_dir,
-        harness=harness, proxy_url=proxy_url, model=args.model,
-        proxy_api_key=args.proxy_api_key, runtime=runtime,
+        config,
+        args,
+        runtime_dir,
+        devcontainer_dir,
+        project_dir,
+        harness=harness,
+        proxy_url=proxy_url,
+        model=args.model,
+        proxy_api_key=args.proxy_api_key,
+        runtime=runtime,
     )
 
     # Write modified config back to the temp devcontainer dir
@@ -494,8 +545,14 @@ def main() -> None:
     runtime_config.write_text(json.dumps(config, indent=2))
 
     run_devcontainer(
-        runtime_config, cache_dir, project_dir, extra_args,
-        args.shell, args.safe_mode, instance_id, harness=harness,
+        runtime_config,
+        cache_dir,
+        project_dir,
+        extra_args,
+        args.shell,
+        args.safe_mode,
+        instance_id,
+        harness=harness,
     )
 
 

@@ -9,6 +9,25 @@ on:
       - main
 
 jobs:
+  python:
+    name: Python (ruff + mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Ruff lint
+        run: uvx ruff check .
+
+      - name: Ruff format check
+        run: uvx ruff format --check .
+
+      - name: Mypy
+        run: uvx mypy src/lamp_the_djinn
+
   shellcheck:
     name: ShellCheck
     runs-on: ubuntu-latest

@@ -133,9 +133,7 @@ def describe_workspace_mounting():
         result = run_clanker(workspace_path, "cat /workspace/test-marker.txt")
 
         assert result.returncode == 0, f"Command failed: {result.stderr}"
-        assert marker in result.stdout, (
-            f"Expected marker '{marker}' not found in output: {result.stdout}"
-        )
+        assert marker in result.stdout, f"Expected marker '{marker}' not found in output: {result.stdout}"
 
     @pytest.mark.integration
     def it_can_write_files_back_to_host(workspace_path: Path):
@@ -154,9 +152,7 @@ def describe_workspace_mounting():
         # Verify the file exists on the host
         host_file = workspace_path / output_file
         assert host_file.exists(), f"File not created on host: {host_file}"
-        assert marker in host_file.read_text(), (
-            f"Expected marker not in file contents: {host_file.read_text()}"
-        )
+        assert marker in host_file.read_text(), f"Expected marker not in file contents: {host_file.read_text()}"
 
     @pytest.mark.integration
     def it_preserves_file_permissions(workspace_path: Path):
@@ -169,9 +165,7 @@ def describe_workspace_mounting():
         result = run_clanker(workspace_path, "test -x /workspace/test-script.sh && echo 'executable'")
 
         assert result.returncode == 0, f"Command failed: {result.stderr}"
-        assert "executable" in result.stdout, (
-            f"File not executable in container: {result.stdout}"
-        )
+        assert "executable" in result.stdout, f"File not executable in container: {result.stdout}"
 
     @pytest.mark.integration
     def it_shows_correct_working_directory(workspace_path: Path):
@@ -179,9 +173,7 @@ def describe_workspace_mounting():
         result = run_clanker(workspace_path, "pwd")
 
         assert result.returncode == 0, f"Command failed: {result.stderr}"
-        assert "/workspace" in result.stdout, (
-            f"Expected /workspace, got: {result.stdout}"
-        )
+        assert "/workspace" in result.stdout, f"Expected /workspace, got: {result.stdout}"
 
 
 def describe_installed_tools():
@@ -222,9 +214,7 @@ def describe_installed_tools():
         result = run_clanker(workspace_path, "npx playwright --version")
 
         assert result.returncode == 0, f"Playwright not available: {result.stderr}"
-        assert "Version" in result.stdout or result.stdout.strip(), (
-            f"Unexpected playwright output: {result.stdout}"
-        )
+        assert "Version" in result.stdout or result.stdout.strip(), f"Unexpected playwright output: {result.stdout}"
 
     @pytest.mark.integration
     def it_can_run_playwright_chromium(workspace_path: Path):
@@ -270,12 +260,21 @@ def ssh_server(tmp_path_factory):
     container_name = f"test-sshd-{uuid.uuid4().hex[:8]}"
     subprocess.run(
         [
-            "docker", "run", "-d",
-            "--name", container_name,
-            "-e", "PUID=1000", "-e", "PGID=1000",
-            "-e", "USER_NAME=git",
-            "-e", "PASSWORD_ACCESS=false",
-            "-v", f"{ssh_dir}:/config/.ssh",
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "-e",
+            "PUID=1000",
+            "-e",
+            "PGID=1000",
+            "-e",
+            "USER_NAME=git",
+            "-e",
+            "PASSWORD_ACCESS=false",
+            "-v",
+            f"{ssh_dir}:/config/.ssh",
             "lscr.io/linuxserver/openssh-server:latest",
         ],
         check=True,
@@ -284,7 +283,10 @@ def ssh_server(tmp_path_factory):
 
     # Wait for sshd
     for _ in range(30):
-        if subprocess.run(["docker", "exec", container_name, "pgrep", "-f", "sshd"], capture_output=True).returncode == 0:
+        if (
+            subprocess.run(["docker", "exec", container_name, "pgrep", "-f", "sshd"], capture_output=True).returncode
+            == 0
+        ):
             break
         time.sleep(1)
     time.sleep(2)
@@ -292,7 +294,9 @@ def ssh_server(tmp_path_factory):
     # Get container IP
     ip = subprocess.run(
         ["docker", "inspect", container_name, "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
 
     yield {"key": str(private_key), "ip": ip, "port": 2222, "container": container_name}
@@ -323,7 +327,8 @@ def describe_ssh():
         # Get server's host key and save to workspace (mounted at /workspace)
         keyscan = subprocess.run(
             ["ssh-keyscan", "-p", str(ssh_server["port"]), ssh_server["ip"]],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         known_hosts = workspace_path / "server_known_hosts"
         known_hosts.write_text(keyscan.stdout)
@@ -390,9 +395,7 @@ def describe_claude_flag_passthrough():
         )
 
         assert result1.returncode == 0, f"First claude run failed: {result1.stderr}"
-        assert "2" in result1.stdout, (
-            f"Expected '2' in first response: {result1.stdout}"
-        )
+        assert "2" in result1.stdout, f"Expected '2' in first response: {result1.stdout}"
 
         # Second run with --continue - add 1 again
         result2 = run_claude(
@@ -402,8 +405,4 @@ def describe_claude_flag_passthrough():
         )
 
         assert result2.returncode == 0, f"Second claude run failed: {result2.stderr}"
-        assert "3" in result2.stdout, (
-            f"Expected '3' in continued response (1+1+1=3): {result2.stdout}"
-        )
-
-
+        assert "3" in result2.stdout, f"Expected '3' in continued response (1+1+1=3): {result2.stdout}"

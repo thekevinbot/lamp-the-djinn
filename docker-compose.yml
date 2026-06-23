@@ -6,7 +6,10 @@ services:
     image: ghcr.io/berriai/litellm:main-latest
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     ports:
-      - "127.0.0.1:4000:4000"
+      # Published on all interfaces so cages reach it via host.docker.internal.
+      # TODO(security): scope to the docker bridge IP, or set a LiteLLM master_key,
+      # so the proxy is not reachable from the wider LAN/tailnet.
+      - "4000:4000"
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
     env_file:

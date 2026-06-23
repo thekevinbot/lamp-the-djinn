@@ -134,6 +134,41 @@ def stage_claude_config(home: Path, dest: Path) -> None:
             shutil.copy2(src, target)
 
 
+def command_is_pi(command: list[str]) -> bool:
+    """True if the command invokes the pi coding agent (directly or via npx/pnpm dlx)."""
+    if not command:
+        return False
+    if command[0] == "pi":
+        return True
+    return any("pi-coding-agent" in tok for tok in command)
+
+
+def stage_pi_config(dest: Path, proxy_url: str, model: str, api_key: str) -> None:
+    """Stage a pi (@earendil-works/pi-coding-agent) config pointed at the proxy.
+
+    pi selects providers via models.json (it ignores OPENAI_BASE_URL), so to drive
+    it from the cage we write a `lamp` provider whose baseUrl is the proxy and make
+    it the default -- a bare `pi` in the cage then talks to the local model.
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "models.json").write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "lamp": {
+                        "baseUrl": proxy_url,
+                        "api": "openai-completions",
+                        "apiKey": api_key,
+                        "models": [{"id": model, "input": ["text"]}],
+                    }
+                }
+            },
+            indent=2,
+        )
+    )
+    (dest / "settings.json").write_text(json.dumps({"defaultProvider": "lamp", "defaultModel": model}, indent=2))
+
+
 def modify_config(
     config: dict,
     args: argparse.Namespace,
@@ -146,6 +181,7 @@ def modify_config(
     runtime: str = "runc",
     trusted: bool = False,
     claude_stage_dir: Path | None = None,
+    pi_stage_dir: Path | None = None,
 ) -> dict:
     """Modify devcontainer config with user-specific settings."""
 
@@ -205,6 +241,12 @@ def modify_config(
                 "source=${localEnv:HOME}/.claude/history.jsonl,target=/home/node/.claude/history.jsonl,type=bind"
             )
 
+    # pi harness adapter: mount the staged pi config (its `lamp` provider points at
+    # the proxy) at the cage's ~/.pi/agent so a bare `pi` uses the local model.
+    if pi_stage_dir is not None:
+        config.setdefault("mounts", [])
+        config["mounts"].append(f"source={pi_stage_dir},target=/home/node/.pi/agent,type=bind")
+
     # Filter out existing SSH and GPG mounts
     if "mounts" in config:
         config["mounts"] = [m for m in config["mounts"] if ".ssh/" not in m and ".gnupg" not in m]
@@ -237,15 +279,15 @@ def modify_config(
             f"source={allowed_domains},target=/usr/local/share/ltd-allowed-domains.txt,type=bind,readonly"
         )
 
-    # Read-only harness cache mount (only when the proxy/harness feature is engaged).
-    # The trusted nightly refresh (scripts/refresh-harness-cache.sh) runs on the
-    # HOST and pre-fetches harness packages (npm/uv) into this dir with a cooldown
-    # window. The cage mounts it read-only so the untrusted agent uses pre-vetted
-    # packages instead of downloading fresh (potentially malicious) ones itself.
-    # NOTE: read-only cache + zero registry egress means a package that was not
-    # pre-fetched cannot be installed in-cage. Verify uv/npm fail gracefully
-    # against a read-only cache in a real container before relying on this.
-    if proxy_url:
+    # Read-only harness cache mount -- ONLY when the proxy is engaged AND the host
+    # cache has actually been warmed by the trusted nightly refresh
+    # (scripts/refresh-harness-cache.sh). Mounting an empty read-only cache and
+    # pointing npm/uv at it would break npx/uvx (they can't write their exec dirs),
+    # so until the cache is populated the cage uses its own writable cache plus the
+    # registry allowlist. Once warmed, the cage uses the pre-vetted cooldown copy.
+    harness_cache = Path.home() / ".cache" / "lamp-the-djinn" / "harness-cache"
+    cache_warmed = harness_cache.is_dir() and any(harness_cache.iterdir())
+    if proxy_url and cache_warmed:
         config.setdefault("mounts", [])
         config["mounts"].append(
             "source=${localEnv:HOME}/.cache/lamp-the-djinn/harness-cache,"
@@ -316,10 +358,12 @@ def modify_config(
     # ANTHROPIC_*) since the command is arbitrary and we cannot know its wire
     # format in advance; the harness reads whichever it understands.
     if proxy_url:
-        # Point the in-container npm/uv caches at the read-only harness cache so
-        # uvx/npx find pre-fetched packages instead of reaching the network.
-        config["runArgs"].extend(["-e", "UV_CACHE_DIR=/home/node/.cache/ltd-harness/uv"])
-        config["runArgs"].extend(["-e", "npm_config_cache=/home/node/.cache/ltd-harness/npm"])
+        # Point the in-container npm/uv caches at the read-only harness cache only
+        # when it is warmed; otherwise leave the cage's default writable caches so
+        # npx/uvx can fetch the harness fresh.
+        if cache_warmed:
+            config["runArgs"].extend(["-e", "UV_CACHE_DIR=/home/node/.cache/ltd-harness/uv"])
+            config["runArgs"].extend(["-e", "npm_config_cache=/home/node/.cache/ltd-harness/npm"])
 
         api_key = proxy_api_key or "lamp-the-djinn"
         prov_env = harness_mod.provider_env_all(proxy_url, model or "local", api_key)
@@ -764,6 +808,14 @@ def main() -> None:
         claude_stage_dir = cache_dir / "claude-config-stage"
         stage_claude_config(Path.home(), claude_stage_dir)
 
+    # Harness adapter: pi configures via models.json (not OPENAI_BASE_URL), so when
+    # the proxy is engaged and the command is pi, stage a pi config whose default
+    # provider points at the proxy, and mount it at the cage's ~/.pi/agent.
+    pi_stage_dir: Path | None = None
+    if proxy_url and command_is_pi(args.command):
+        pi_stage_dir = cache_dir / "pi-agent-stage"
+        stage_pi_config(pi_stage_dir, proxy_url, args.model or "local", args.proxy_api_key)
+
     # Load and modify config
     config = json.loads(source_config.read_text())
     config = modify_config(
@@ -778,6 +830,7 @@ def main() -> None:
         runtime=runtime,
         trusted=args.trusted,
         claude_stage_dir=claude_stage_dir,
+        pi_stage_dir=pi_stage_dir,
     )
 
     # Write modified config back to the temp devcontainer dir

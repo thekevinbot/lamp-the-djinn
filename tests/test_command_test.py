@@ -14,14 +14,17 @@ which is not in the dev dependency set).
 """
 
 import argparse
+import json
 from pathlib import Path
 from unittest import mock
 
 from lamp_the_djinn.cli import (
+    command_is_pi,
     create_parser,
     modify_config,
     record_manifest,
     resolve_command,
+    stage_pi_config,
 )
 from lamp_the_djinn.harness import provider_env_all
 
@@ -260,6 +263,37 @@ def describe_record_manifest():
             record_manifest(["uvx", "aider"])
             record_manifest(["uvx", "aider"])
         assert self_check(tmp_path).count("aider") == 1
+
+
+def describe_pi_adapter():
+    """pi configures via models.json; the adapter points it at the proxy."""
+
+    def it_detects_pi_commands():
+        assert command_is_pi(["pi", "-p", "hi"])
+        assert command_is_pi(["npx", "-y", "@earendil-works/pi-coding-agent"])
+        assert not command_is_pi(["claude", "-p", "hi"])
+        assert not command_is_pi([])
+
+    def it_stages_a_proxy_provider(tmp_path: Path):
+        agent = tmp_path / "agent"
+        stage_pi_config(agent, "http://host.docker.internal:4000/v1", "qwen", "k")
+        models = json.loads((agent / "models.json").read_text())
+        prov = models["providers"]["lamp"]
+        assert prov["baseUrl"] == "http://host.docker.internal:4000/v1"
+        assert prov["api"] == "openai-completions"
+        assert prov["models"][0]["id"] == "qwen"
+        settings = json.loads((agent / "settings.json").read_text())
+        assert settings["defaultProvider"] == "lamp"
+        assert settings["defaultModel"] == "qwen"
+
+    def it_mounts_pi_config_when_staged(tmp_path: Path):
+        config = modify_config(
+            {"mounts": [], "runArgs": []},
+            _bare_args(),
+            tmp_path,
+            pi_stage_dir=tmp_path / "pi",
+        )
+        assert any("/home/node/.pi/agent" in m for m in config["mounts"])
 
 
 def self_check(home: Path) -> list[str]:

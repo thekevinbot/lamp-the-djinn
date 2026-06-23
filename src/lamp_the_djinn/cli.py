@@ -333,6 +333,19 @@ def modify_config(
     config["runArgs"] = stripped_run_args
     config["runArgs"].append(f"--memory={memory}")
 
+    # Quiet npm's notices/warnings in the cage (they bury the agent output);
+    # loglevel=error still surfaces real failures (e.g. a failed npx fetch).
+    config["runArgs"].extend(
+        [
+            "-e",
+            "npm_config_update_notifier=false",
+            "-e",
+            "npm_config_fund=false",
+            "-e",
+            "npm_config_loglevel=error",
+        ]
+    )
+
     # Isolation seam: when a stronger OCI runtime than the stock runc was
     # resolved (e.g. gVisor's runsc or kata-runtime), tell Docker to use it.
     # For plain runc we add nothing, leaving default behavior untouched.
@@ -534,6 +547,11 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run the harness with permission prompts enabled (more interruptions, extra safety)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Show all build/firewall/devcontainer output (default: only the agent's output). Env: LTD_DEBUG",
+    )
     # Docker run flags - passed directly to runArgs
     parser.add_argument(
         "-p",
@@ -584,6 +602,7 @@ def apply_env_defaults(args: argparse.Namespace) -> None:
     # Isolation runtime preference. "auto" picks gVisor when installed, else runc,
     # so stock-Docker hosts (runc-only) keep their existing behavior.
     args.runtime = args.runtime or os.environ.get("LTD_RUNTIME") or "auto"
+    args.debug = args.debug or bool(os.environ.get("LTD_DEBUG"))
     # Trust tier for ~/.claude CONFIG exposure (default strict). Opt-in only.
     args.trusted = args.trusted or bool(os.environ.get("LTD_TRUSTED"))
     # Per-cage memory cap. Falls back to the 2g default inside modify_config.
@@ -598,6 +617,7 @@ def run_devcontainer(
     shell_cmd: str | None = None,
     safe_mode: bool = False,
     instance_id: str | None = None,
+    debug: bool = False,
 ) -> None:
     """Run the devcontainer with the resolved command.
 
@@ -616,8 +636,6 @@ def run_devcontainer(
 
     run_cmd = resolve_command(command or [], shell_cmd, safe_mode)
 
-    print(f"Starting devcontainer (instance {instance_id}, command: {' '.join(run_cmd)})...")
-
     up_cmd = devcontainer_cmd + [
         "up",
         "--workspace-folder",
@@ -628,7 +646,18 @@ def run_devcontainer(
         id_label,
     ]
 
-    subprocess.run(up_cmd, check=True)
+    if debug:
+        print(f"Starting devcontainer (instance {instance_id}, command: {' '.join(run_cmd)})...")
+        subprocess.run(up_cmd, check=True)
+    else:
+        # Quiet (default): hide the build/firewall/devcontainer noise so only the
+        # agent's own output reaches the terminal. Surface it only if the up fails.
+        print("Starting cage (first run builds the image; may take a few minutes)...", file=sys.stderr)
+        result = subprocess.run(up_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            sys.stderr.write(result.stdout)
+            sys.stderr.write(result.stderr)
+            raise subprocess.CalledProcessError(result.returncode, up_cmd)
 
     exec_cmd = (
         devcontainer_cmd
@@ -714,12 +743,15 @@ def check_docker_accessible() -> None:
         sys.exit(1)
 
 
-def pull_docker_image_if_needed() -> None:
+def pull_docker_image_if_needed(debug: bool = False) -> None:
     """Pull the Docker image if not already present."""
     result = subprocess.run(["docker", "image", "inspect", IMAGE_NAME], capture_output=True)
     if result.returncode != 0:
-        print("Pulling Docker image...")
-        subprocess.run(["docker", "pull", IMAGE_NAME], check=True)
+        if debug:
+            print("Pulling Docker image...")
+        # Capture so a pull failure (e.g. image not published) stays quiet; the
+        # caller catches CalledProcessError and falls back to a local build.
+        subprocess.run(["docker", "pull", IMAGE_NAME], check=True, capture_output=True, text=True)
 
 
 def main() -> None:
@@ -773,26 +805,23 @@ def main() -> None:
     # Default ("auto") yields runc on stock Docker (no --runtime flag added) and
     # only switches to gVisor when runsc is genuinely installed.
     runtime = detect_runtime(args.runtime)
-    print(f"Isolation runtime: {runtime}")
+    if args.debug:
+        print(f"Isolation runtime: {runtime}")
 
     # Pull the prebuilt image if not building locally. If it can't be pulled
     # (not published to the registry yet, or no access), fall back to building
     # locally so the run still works instead of crashing.
     if not args.build:
         try:
-            pull_docker_image_if_needed()
-            print_container_info(IMAGE_NAME)
+            pull_docker_image_if_needed(args.debug)
+            if args.debug:
+                print_container_info(IMAGE_NAME)
         except subprocess.CalledProcessError:
-            print(
-                f"Could not pull {IMAGE_NAME}; building locally instead.",
-                file=sys.stderr,
-            )
+            if args.debug:
+                print(f"Could not pull {IMAGE_NAME}; building locally instead.", file=sys.stderr)
             args.build = True
-            print("Container image: Local build (pull fallback)")
-            print()
-    else:
+    elif args.debug:
         print("Container image: Local build (--build flag)")
-        print()
 
     # Capture current working directory (the project to mount)
     project_dir = Path.cwd().resolve()
@@ -861,6 +890,7 @@ def main() -> None:
         args.shell,
         args.safe_mode,
         instance_id,
+        debug=args.debug,
     )
 
 

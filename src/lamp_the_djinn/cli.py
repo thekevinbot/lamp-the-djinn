@@ -356,10 +356,7 @@ def modify_config(
         for env_var in args.env:
             config["runArgs"].extend(["-e", env_var])
 
-    # Provider env injection: wire whatever command runs in the cage to the
-    # LiteLLM proxy on the host. We inject BOTH provider families (OPENAI_* and
-    # ANTHROPIC_*) since the command is arbitrary and we cannot know its wire
-    # format in advance; the harness reads whichever it understands.
+    # Wire whatever command runs in the cage to the LiteLLM proxy on the host.
     if proxy_url:
         # Point the in-container npm/uv caches at the read-only harness cache only
         # when it is warmed; otherwise leave the cage's default writable caches so
@@ -368,10 +365,15 @@ def modify_config(
             config["runArgs"].extend(["-e", "UV_CACHE_DIR=/home/node/.cache/ltd-harness/uv"])
             config["runArgs"].extend(["-e", "npm_config_cache=/home/node/.cache/ltd-harness/npm"])
 
-        api_key = proxy_api_key or "lamp-the-djinn"
-        prov_env = harness_mod.provider_env_all(proxy_url, model or "local", api_key)
-        for key, value in prov_env.items():
-            config["runArgs"].extend(["-e", f"{key}={value}"])
+        # Generic provider env (OPENAI_*/ANTHROPIC_*) for harnesses that read it.
+        # Skip it when a harness has its own adapter (e.g. pi, configured via
+        # models.json) -- injecting unused provider creds is just confusing noise.
+        if pi_stage_dir is None:
+            api_key = proxy_api_key or "lamp-the-djinn"
+            prov_env = harness_mod.provider_env_all(proxy_url, model or "local", api_key)
+            for key, value in prov_env.items():
+                config["runArgs"].extend(["-e", f"{key}={value}"])
+
         # The container reaches the host proxy via the docker bridge gateway.
         # On Linux host.docker.internal is not automatic, so map it explicitly.
         config["runArgs"].append("--add-host=host.docker.internal:host-gateway")

@@ -295,6 +295,21 @@ def describe_pi_adapter():
         )
         assert any("/home/node/.pi/agent" in m for m in config["mounts"])
 
+    def it_skips_generic_provider_env_for_pi(tmp_path: Path):
+        """pi configures via models.json, so no OPENAI_*/ANTHROPIC_* env is injected."""
+        config = modify_config(
+            {"mounts": [], "runArgs": []},
+            _bare_args(),
+            tmp_path,
+            proxy_url="http://host.docker.internal:4000/v1",
+            model="qwen",
+            pi_stage_dir=tmp_path / "pi",
+        )
+        run_args = config["runArgs"]
+        assert not any("OPENAI_" in a or "ANTHROPIC_" in a for a in run_args)
+        # The proxy gateway mapping is still added so pi can reach the proxy.
+        assert "--add-host=host.docker.internal:host-gateway" in run_args
+
 
 def self_check(home: Path) -> list[str]:
     """Read manifest lines under a mocked HOME (helper for record_manifest tests)."""

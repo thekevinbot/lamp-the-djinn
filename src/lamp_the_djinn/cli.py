@@ -129,7 +129,10 @@ def stage_claude_config(home: Path, dest: Path) -> None:
             continue
         target = dest / name
         if src.is_dir():
-            shutil.copytree(src, target, dirs_exist_ok=True)
+            # Follow symlinks (materialize skill/command content into the copy) but
+            # skip dangling ones -- ~/.claude often has skills/commands symlinked to
+            # other projects, some of which may be stale.
+            shutil.copytree(src, target, dirs_exist_ok=True, ignore_dangling_symlinks=True)
         else:
             shutil.copy2(src, target)
 

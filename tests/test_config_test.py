@@ -116,6 +116,20 @@ def describe_stage_claude_config():
         assert not (dest / "CLAUDE.md").exists()
         assert not (dest / "commands").exists()
 
+    def it_skips_dangling_symlinks_in_copied_dirs(tmp_path: Path):
+        """A stale symlink under skills/ (common in real ~/.claude) is skipped, not fatal."""
+        home = tmp_path / "home"
+        skills = home / ".claude" / "skills"
+        skills.mkdir(parents=True)
+        (skills / "good.md").write_text("ok")
+        (skills / "dangling").symlink_to(tmp_path / "nonexistent-target")
+        dest = tmp_path / "stage"
+
+        stage_claude_config(home, dest)  # must not raise
+
+        assert (dest / "skills" / "good.md").read_text() == "ok"
+        assert not (dest / "skills" / "dangling").exists()
+
 
 def describe_strict_claude_mount():
     """Default (strict): mount the staged COPY, write back only transcript data."""

@@ -11,6 +11,8 @@ set -euo pipefail
 
 KATA_DIR=/opt/kata
 RUNTIME_BIN="$KATA_DIR/bin/kata-runtime"
+SHIM_BIN="$KATA_DIR/bin/containerd-shim-kata-v2"
+SHIM_LINK=/usr/local/bin/containerd-shim-kata-v2
 CLH_CONF="$KATA_DIR/share/defaults/kata-containers/configuration-clh.toml"
 DEFAULT_CONF="$KATA_DIR/share/defaults/kata-containers/configuration.toml"
 DAEMON_JSON=/etc/docker/daemon.json
@@ -20,8 +22,8 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-if [ ! -x "$RUNTIME_BIN" ]; then
-    echo "ERROR: $RUNTIME_BIN not found -- install the kata-static release to /opt/kata first." >&2
+if [ ! -x "$RUNTIME_BIN" ] || [ ! -x "$SHIM_BIN" ]; then
+    echo "ERROR: Kata binaries not found under $KATA_DIR/bin -- install the kata-static release to /opt/kata first." >&2
     exit 1
 fi
 
@@ -38,15 +40,18 @@ fi
 echo "==> Selecting Cloud Hypervisor (virtio-fs, so bind mounts / -v work in the VM)..."
 ln -sf "$CLH_CONF" "$DEFAULT_CONF"
 
+echo "==> Putting the Kata v2 shim on PATH (Docker drives Kata 3.x via the containerd shim, not an OCI binary)..."
+ln -sf "$SHIM_BIN" "$SHIM_LINK"
+
 echo "==> Registering the 'kata' runtime in $DAEMON_JSON..."
 mkdir -p /etc/docker
 if [ -f "$DAEMON_JSON" ]; then
     # Merge into existing config (preserve whatever is already there).
     tmp="$(mktemp)"
-    jq --arg p "$RUNTIME_BIN" '.runtimes.kata = {path: $p}' "$DAEMON_JSON" > "$tmp"
+    jq '.runtimes.kata = {runtimeType: "io.containerd.kata.v2"}' "$DAEMON_JSON" > "$tmp"
     mv "$tmp" "$DAEMON_JSON"
 else
-    jq -n --arg p "$RUNTIME_BIN" '{runtimes: {kata: {path: $p}}}' > "$DAEMON_JSON"
+    jq -n '{runtimes: {kata: {runtimeType: "io.containerd.kata.v2"}}}' > "$DAEMON_JSON"
 fi
 
 echo "==> Restarting Docker (service restart, NOT a reboot)..."
@@ -60,6 +65,9 @@ else
     exit 1
 fi
 
-echo
-echo "Done. Quick smoke test (a Kata guest kernel should differ from the host's $(uname -r)):"
-echo "    docker run --rm --runtime kata busybox uname -r"
+echo "==> Booting a test Kata VM (its kernel should differ from the host's $(uname -r))..."
+if docker run --rm --runtime kata busybox uname -r; then
+    echo "Done: Kata is working end-to-end."
+else
+    echo "WARNING: the test VM failed to boot -- see the error above." >&2
+fi

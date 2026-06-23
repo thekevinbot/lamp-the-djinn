@@ -773,10 +773,21 @@ def main() -> None:
     runtime = detect_runtime(args.runtime)
     print(f"Isolation runtime: {runtime}")
 
-    # Pull image if not building locally and image doesn't exist
+    # Pull the prebuilt image if not building locally. If it can't be pulled
+    # (not published to the registry yet, or no access), fall back to building
+    # locally so the run still works instead of crashing.
     if not args.build:
-        pull_docker_image_if_needed()
-        print_container_info(IMAGE_NAME)
+        try:
+            pull_docker_image_if_needed()
+            print_container_info(IMAGE_NAME)
+        except subprocess.CalledProcessError:
+            print(
+                f"Could not pull {IMAGE_NAME}; building locally instead.",
+                file=sys.stderr,
+            )
+            args.build = True
+            print("Container image: Local build (pull fallback)")
+            print()
     else:
         print("Container image: Local build (--build flag)")
         print()

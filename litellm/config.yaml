@@ -21,6 +21,13 @@ model_list:
       api_base: http://tower.tail790bbc.ts.net:8180/v1
       api_key: "llamacpp-ignores-this"
 
+  # --- gemma-4-12B on tower (alternate local model) ---
+  - model_name: gemma
+    litellm_params:
+      model: openai/gemma-4-12B-it-Q8_0
+      api_base: http://tower.tail790bbc.ts.net:8180/v1
+      api_key: "llamacpp-ignores-this"
+
   # --- GLM-5.2 via OpenRouter, preferring DeepInfra (fp4) ---
   # allow_fallbacks: true keeps you resilient if DeepInfra is down -- OpenRouter
   # picks another provider rather than failing. Set false to pin DeepInfra only.

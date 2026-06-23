@@ -137,41 +137,6 @@ def stage_claude_config(home: Path, dest: Path) -> None:
             shutil.copy2(src, target)
 
 
-def command_is_pi(command: list[str]) -> bool:
-    """True if the command invokes the pi coding agent (directly or via npx/pnpm dlx)."""
-    if not command:
-        return False
-    if command[0] == "pi":
-        return True
-    return any("pi-coding-agent" in tok for tok in command)
-
-
-def stage_pi_config(dest: Path, proxy_url: str, model: str, api_key: str) -> None:
-    """Stage a pi (@earendil-works/pi-coding-agent) config pointed at the proxy.
-
-    pi selects providers via models.json (it ignores OPENAI_BASE_URL), so to drive
-    it from the cage we write a `lamp` provider whose baseUrl is the proxy and make
-    it the default -- a bare `pi` in the cage then talks to the local model.
-    """
-    dest.mkdir(parents=True, exist_ok=True)
-    (dest / "models.json").write_text(
-        json.dumps(
-            {
-                "providers": {
-                    "lamp": {
-                        "baseUrl": proxy_url,
-                        "api": "openai-completions",
-                        "apiKey": api_key,
-                        "models": [{"id": model, "input": ["text"]}],
-                    }
-                }
-            },
-            indent=2,
-        )
-    )
-    (dest / "settings.json").write_text(json.dumps({"defaultProvider": "lamp", "defaultModel": model}, indent=2))
-
-
 def modify_config(
     config: dict,
     args: argparse.Namespace,
@@ -184,7 +149,6 @@ def modify_config(
     runtime: str = "runc",
     trusted: bool = False,
     claude_stage_dir: Path | None = None,
-    pi_stage_dir: Path | None = None,
 ) -> dict:
     """Modify devcontainer config with user-specific settings."""
 
@@ -244,12 +208,6 @@ def modify_config(
                 "source=${localEnv:HOME}/.claude/history.jsonl,target=/home/node/.claude/history.jsonl,type=bind"
             )
 
-    # pi harness adapter: mount the staged pi config (its `lamp` provider points at
-    # the proxy) at the cage's ~/.pi/agent so a bare `pi` uses the local model.
-    if pi_stage_dir is not None:
-        config.setdefault("mounts", [])
-        config["mounts"].append(f"source={pi_stage_dir},target=/home/node/.pi/agent,type=bind")
-
     # Filter out existing SSH and GPG mounts
     if "mounts" in config:
         config["mounts"] = [m for m in config["mounts"] if ".ssh/" not in m and ".gnupg" not in m]
@@ -282,20 +240,37 @@ def modify_config(
             f"source={allowed_domains},target=/usr/local/share/ltd-allowed-domains.txt,type=bind,readonly"
         )
 
-    # Read-only harness cache mount -- ONLY when the proxy is engaged AND the host
-    # cache has actually been warmed by the trusted nightly refresh
-    # (scripts/refresh-harness-cache.sh). Mounting an empty read-only cache and
-    # pointing npm/uv at it would break npx/uvx (they can't write their exec dirs),
-    # so until the cache is populated the cage uses its own writable cache plus the
-    # registry allowlist. Once warmed, the cage uses the pre-vetted cooldown copy.
+    # Harness package cache mount -- TRUST-gated so npx/uvx don't re-download the
+    # harness every run. Three tiers:
+    #
+    #   trusted          -> mount the host cache READ-WRITE. The first run populates
+    #                       it; later runs reuse it (no re-download). The agent is
+    #                       trusted, so a writable host cache is acceptable.
+    #   untrusted+warmed -> mount the cache READ-ONLY. It was pre-vetted by the
+    #                       trusted nightly refresh (scripts/refresh-harness-cache.sh),
+    #                       so the untrusted agent reads the cooldown copy but cannot
+    #                       write to it.
+    #   untrusted+cold   -> no cache mount and no cache env. Mounting an empty
+    #                       read-only cache and pointing npm/uv at it would break
+    #                       npx/uvx (they can't write their exec dirs), so the cage
+    #                       falls back to its own writable cache (re-downloads, but
+    #                       stays safe).
     harness_cache = Path.home() / ".cache" / "lamp-the-djinn" / "harness-cache"
     cache_warmed = harness_cache.is_dir() and any(harness_cache.iterdir())
-    if proxy_url and cache_warmed:
+    use_cache_env = False
+    if trusted:
+        config.setdefault("mounts", [])
+        config["mounts"].append(
+            "source=${localEnv:HOME}/.cache/lamp-the-djinn/harness-cache,target=/home/node/.cache/ltd-harness,type=bind"
+        )
+        use_cache_env = True
+    elif cache_warmed:
         config.setdefault("mounts", [])
         config["mounts"].append(
             "source=${localEnv:HOME}/.cache/lamp-the-djinn/harness-cache,"
             "target=/home/node/.cache/ltd-harness,type=bind,readonly"
         )
+        use_cache_env = True
 
     # WRITABLE credential-persistence mount. Harness sessions (e.g. an OAuth
     # token a harness writes after `login`) persist across runs via this volume.
@@ -369,27 +344,26 @@ def modify_config(
         for env_var in args.env:
             config["runArgs"].extend(["-e", env_var])
 
+    # Point the in-container npm/uv caches at the mounted harness cache whenever it
+    # is mounted (trusted, or untrusted+warmed). When it isn't, leave the cage's
+    # default writable caches so npx/uvx can fetch the harness fresh.
+    if use_cache_env:
+        config["runArgs"].extend(["-e", "UV_CACHE_DIR=/home/node/.cache/ltd-harness/uv"])
+        config["runArgs"].extend(["-e", "npm_config_cache=/home/node/.cache/ltd-harness/npm"])
+
     # Wire whatever command runs in the cage to the LiteLLM proxy on the host.
     if proxy_url:
-        # Point the in-container npm/uv caches at the read-only harness cache only
-        # when it is warmed; otherwise leave the cage's default writable caches so
-        # npx/uvx can fetch the harness fresh.
-        if cache_warmed:
-            config["runArgs"].extend(["-e", "UV_CACHE_DIR=/home/node/.cache/ltd-harness/uv"])
-            config["runArgs"].extend(["-e", "npm_config_cache=/home/node/.cache/ltd-harness/npm"])
-
         # Generic provider env (OPENAI_*/ANTHROPIC_*) for harnesses that read it.
-        # Skip it when a harness has its own adapter (e.g. pi, configured via
-        # models.json) -- injecting unused provider creds is just confusing noise.
-        if pi_stage_dir is None:
-            api_key = proxy_api_key or "lamp-the-djinn"
-            prov_env = harness_mod.provider_env_all(proxy_url, model or "local", api_key)
-            for key, value in prov_env.items():
-                config["runArgs"].extend(["-e", f"{key}={value}"])
+        api_key = proxy_api_key or "lamp-the-djinn"
+        prov_env = harness_mod.provider_env_all(proxy_url, model or "local", api_key)
+        for key, value in prov_env.items():
+            config["runArgs"].extend(["-e", f"{key}={value}"])
 
-        # The container reaches the host proxy via the docker bridge gateway.
-        # On Linux host.docker.internal is not automatic, so map it explicitly.
-        config["runArgs"].append("--add-host=host.docker.internal:host-gateway")
+    # The container reaches the host (the LiteLLM proxy, or a host service a
+    # harness config like pi's models.json points at) via the docker bridge
+    # gateway. On Linux host.docker.internal is not automatic, so always map it
+    # explicitly -- it must resolve regardless of whether ltd injects provider env.
+    config["runArgs"].append("--add-host=host.docker.internal:host-gateway")
 
     # Build postStartCommand
     commands = ["sudo /usr/local/bin/init-firewall.sh"]
@@ -651,9 +625,18 @@ def run_devcontainer(
         subprocess.run(up_cmd, check=True)
     else:
         # Quiet (default): hide the build/firewall/devcontainer noise so only the
-        # agent's own output reaches the terminal. Surface it only if the up fails.
-        print("Starting cage (first run builds the image; may take a few minutes)...", file=sys.stderr)
+        # agent's own output reaches the terminal. Show a transient status while the
+        # cage comes up (a first build can be slow), then erase it so it doesn't
+        # linger above the agent's output. TTY only -- piped output stays clean.
+        # Surface the full output if the up fails.
+        is_tty = sys.stderr.isatty()
+        if is_tty:
+            sys.stderr.write("Starting cage...")
+            sys.stderr.flush()
         result = subprocess.run(up_cmd, capture_output=True, text=True)
+        if is_tty:
+            sys.stderr.write("\r\033[K")  # carriage return + clear-to-end-of-line
+            sys.stderr.flush()
         if result.returncode != 0:
             sys.stderr.write(result.stdout)
             sys.stderr.write(result.stderr)
@@ -767,16 +750,16 @@ def main() -> None:
     parser = create_parser()
     args = parser.parse_args()
 
-    # Detect whether the user explicitly engaged the proxy feature (via flags,
-    # env, or by giving an explicit command) BEFORE apply_env_defaults coalesces
-    # everything to defaults. This keeps the bare-default case (plain `ltd`, no
-    # command, no proxy) behaving exactly as before: no provider env is injected
-    # and the proxy URL stays unset, so it just runs claude.
+    # Detect whether the user explicitly engaged the proxy feature (via the
+    # --model/--proxy-url flags or the LTD_MODEL/LTD_PROXY_URL env) BEFORE
+    # apply_env_defaults coalesces everything to defaults. Merely giving a command
+    # does NOT engage the proxy: a bare `ltd npx pi ...` injects no provider env
+    # and leaves the proxy URL unset, so the harness uses its own config (e.g. the
+    # user's mounted ~/.pi). Provider env is injected only on explicit opt-in.
     proxy_engaged = any(
         [
             args.proxy_url is not None,
             args.model is not None,
-            bool(args.command),
             os.environ.get("LTD_PROXY_URL"),
             os.environ.get("LTD_MODEL"),
         ]
@@ -845,6 +828,12 @@ def main() -> None:
     auth_dir = Path.home() / ".cache" / "lamp-the-djinn" / "auth"
     auth_dir.mkdir(parents=True, exist_ok=True)
 
+    # Ensure the harness package cache dir exists on the host so the writable
+    # (trusted) bind mount has a source. First run populates it; later runs reuse
+    # it so npx/uvx don't re-download the harness every time (see modify_config).
+    harness_cache_dir = Path.home() / ".cache" / "lamp-the-djinn" / "harness-cache"
+    harness_cache_dir.mkdir(parents=True, exist_ok=True)
+
     # Strict mode (default): stage a disposable, allowlisted copy of the host
     # ~/.claude config into this instance's cache dir and mount THAT instead of
     # the live host config. Trusted mode skips this and binds the host directly.
@@ -852,14 +841,6 @@ def main() -> None:
     if not args.trusted:
         claude_stage_dir = cache_dir / "claude-config-stage"
         stage_claude_config(Path.home(), claude_stage_dir)
-
-    # Harness adapter: pi configures via models.json (not OPENAI_BASE_URL), so when
-    # the proxy is engaged and the command is pi, stage a pi config whose default
-    # provider points at the proxy, and mount it at the cage's ~/.pi/agent.
-    pi_stage_dir: Path | None = None
-    if proxy_url and command_is_pi(args.command):
-        pi_stage_dir = cache_dir / "pi-agent-stage"
-        stage_pi_config(pi_stage_dir, proxy_url, args.model or "local", args.proxy_api_key)
 
     # Load and modify config
     config = json.loads(source_config.read_text())
@@ -875,7 +856,6 @@ def main() -> None:
         runtime=runtime,
         trusted=args.trusted,
         claude_stage_dir=claude_stage_dir,
-        pi_stage_dir=pi_stage_dir,
     )
 
     # Write modified config back to the temp devcontainer dir

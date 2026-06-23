@@ -14,6 +14,13 @@ model_list:
       api_base: http://tower.tail790bbc.ts.net:8180/v1
       api_key: "llamacpp-ignores-this"  # llama.cpp needs no auth; LiteLLM requires a value
 
+  # --- Qwen3.6-27B on tower: a real local coder, preferred over the 3B `local` ---
+  - model_name: qwen
+    litellm_params:
+      model: openai/Qwen3.6-27B-Q4_K_M
+      api_base: http://tower.tail790bbc.ts.net:8180/v1
+      api_key: "llamacpp-ignores-this"
+
   # --- GLM-5.2 via OpenRouter, preferring DeepInfra (fp4) ---
   # allow_fallbacks: true keeps you resilient if DeepInfra is down -- OpenRouter
   # picks another provider rather than failing. Set false to pin DeepInfra only.

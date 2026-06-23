@@ -27,17 +27,18 @@ def _docker_info_result(runtimes: dict, returncode: int = 0) -> mock.Mock:
 def describe_detect_runtime():
     """Unit tests for detect_runtime function."""
 
-    def it_auto_prefers_runsc_when_present():
-        """auto resolves to runsc (gVisor) when Docker registers it."""
+    def it_auto_resolves_to_runc_even_when_runsc_present():
+        """auto picks the lightest sane runtime (runc) and never auto-escalates
+        to gVisor -- runsc breaks the cage's ipset egress firewall."""
         result = _docker_info_result({"runc": {}, "runsc": {}})
         with mock.patch("subprocess.run", return_value=result):
-            assert detect_runtime("auto") == "runsc"
-
-    def it_auto_falls_back_to_runc_without_runsc():
-        """auto resolves to runc on a stock host that lacks gVisor."""
-        result = _docker_info_result({"runc": {}, "io.containerd.runc.v2": {}})
-        with mock.patch("subprocess.run", return_value=result):
             assert detect_runtime("auto") == "runc"
+
+    def it_auto_does_not_query_docker():
+        """The default path short-circuits to runc without a docker info call."""
+        with mock.patch("subprocess.run", side_effect=AssertionError("queried docker")):
+            assert detect_runtime("auto") == "runc"
+            assert detect_runtime("runc") == "runc"
 
     def it_returns_concrete_runtime_when_present():
         """A concrete request is honored when Docker has that runtime."""

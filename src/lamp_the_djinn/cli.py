@@ -26,9 +26,11 @@ def detect_runtime(preferred: str) -> str:
     Queries Docker for its registered runtimes and reconciles the user's
     preference against what is actually installed.
 
-    - preferred == "auto": prefer gVisor ("runsc") when it is installed,
-      otherwise fall back to the stock "runc". This keeps default behavior
-      unchanged on hosts that only have runc.
+    - preferred == "auto" (the default): the lightest sane runtime, "runc".
+      gVisor/Kata are NOT auto-selected. gVisor's "runsc" breaks the cage's
+      ipset egress firewall (the primary containment), and Kata adds full-VM
+      overhead; opt into either explicitly via --runtime when you specifically
+      want kernel-level isolation and accept the tradeoff.
     - preferred is a concrete name (e.g. "runsc", "kata-runtime", "runc"):
       use it if Docker reports it, otherwise warn on stderr and fall back to
       "runc" so the run still proceeds.
@@ -36,6 +38,12 @@ def detect_runtime(preferred: str) -> str:
     Robust to any docker failure (missing binary, daemon down, malformed
     output): always returns a usable runtime ("runc").
     """
+    # The default path needs no Docker query: the lightest sane runtime is
+    # always runc, which every Docker host has. Only a concrete non-runc
+    # request (runsc/kata) is validated against what Docker actually registers.
+    if preferred in ("auto", "runc"):
+        return "runc"
+
     try:
         result = subprocess.run(
             ["docker", "info", "--format", "{{json .Runtimes}}"],
@@ -49,9 +57,6 @@ def detect_runtime(preferred: str) -> str:
             available = list(runtimes.keys()) if isinstance(runtimes, dict) else []
     except (OSError, ValueError):
         available = []
-
-    if preferred == "auto":
-        return "runsc" if "runsc" in available else "runc"
 
     if preferred in available:
         return preferred
@@ -497,8 +502,9 @@ def create_parser() -> argparse.ArgumentParser:
         "--runtime",
         default=None,
         help="OCI isolation runtime for Docker (the isolation seam): "
-        "'auto' (default, uses gVisor/runsc when installed else runc), "
-        "or a concrete name like 'runsc', 'kata-runtime', 'runc'. "
+        "'auto' (default) uses the lightest sane runtime, runc. "
+        "gVisor/Kata are opt-in only -- pass a concrete name like 'runsc' or "
+        "'kata-runtime' (runsc breaks the egress firewall; Kata is full-VM). "
         "Env: LTD_RUNTIME",
     )
     parser.add_argument(
@@ -573,8 +579,8 @@ def apply_env_defaults(args: argparse.Namespace) -> None:
     args.proxy_url = args.proxy_url or os.environ.get("LTD_PROXY_URL")
     # Proxy auth: LiteLLM master key. Defaults to the project's literal placeholder.
     args.proxy_api_key = os.environ.get("LTD_PROXY_API_KEY", "lamp-the-djinn")
-    # Isolation runtime preference. "auto" picks gVisor when installed, else runc,
-    # so stock-Docker hosts (runc-only) keep their existing behavior.
+    # Isolation runtime preference. "auto" resolves to the lightest sane runtime
+    # (runc); gVisor/Kata are opt-in via --runtime / LTD_RUNTIME only.
     args.runtime = args.runtime or os.environ.get("LTD_RUNTIME") or "auto"
     args.debug = args.debug or bool(os.environ.get("LTD_DEBUG"))
     # Trust tier for ~/.claude CONFIG exposure (default strict). Opt-in only.
@@ -785,8 +791,8 @@ def main() -> None:
     check_docker_accessible()
 
     # Resolve the isolation runtime against what Docker actually has registered.
-    # Default ("auto") yields runc on stock Docker (no --runtime flag added) and
-    # only switches to gVisor when runsc is genuinely installed.
+    # Default ("auto") yields runc (no --runtime flag added); a stronger runtime
+    # is used only when explicitly requested and registered with Docker.
     runtime = detect_runtime(args.runtime)
     if args.debug:
         print(f"Isolation runtime: {runtime}")

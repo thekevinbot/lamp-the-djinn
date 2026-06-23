@@ -100,6 +100,40 @@ def generate_ssh_config(runtime_dir: Path, ssh_key_name: str) -> Path:
     return ssh_config
 
 
+# Allowlist of names copied from the host ~/.claude into the strict-mode stage
+# dir. Default-deny: anything NOT named here is never copied. In particular this
+# excludes .credentials.json and any auth/token/credential-bearing file, so the
+# untrusted agent never sees host credentials. `hooks` is included so the user's
+# own hooks (e.g. the transcript-posting Stop hook) still run in strict mode --
+# they execute against the disposable copy, so the agent can't persist changes
+# to the host's hooks.
+_CLAUDE_CONFIG_ALLOWLIST = ("settings.json", "CLAUDE.md", "commands", "agents", "skills", "hooks")
+
+
+def stage_claude_config(home: Path, dest: Path) -> None:
+    """Copy an allowlisted subset of host ``~/.claude`` config into ``dest``.
+
+    Copies ONLY ``settings.json``, ``CLAUDE.md``, and the ``commands/``,
+    ``agents/``, ``skills/`` dirs -- each only if it exists on the host. This is
+    an allowlist (default-deny): unknown entries (including ``.credentials.json``
+    or anything bearing ``credential``/``token``/``auth`` in its name) are never
+    copied. The result is a disposable copy the cage can mount + freely mutate
+    without touching the host or exposing host credentials.
+    """
+    src_root = home / ".claude"
+    dest.mkdir(parents=True, exist_ok=True)
+
+    for name in _CLAUDE_CONFIG_ALLOWLIST:
+        src = src_root / name
+        if not src.exists():
+            continue
+        target = dest / name
+        if src.is_dir():
+            shutil.copytree(src, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(src, target)
+
+
 def modify_config(
     config: dict,
     args: argparse.Namespace,
@@ -110,6 +144,8 @@ def modify_config(
     model: str | None = None,
     proxy_api_key: str | None = None,
     runtime: str = "runc",
+    trusted: bool = False,
+    claude_stage_dir: Path | None = None,
 ) -> dict:
     """Modify devcontainer config with user-specific settings."""
 
@@ -125,18 +161,49 @@ def modify_config(
         config["workspaceMount"] = f"source={project_dir},target={project_dir},type=bind,consistency=delegated"
         config["workspaceFolder"] = str(project_dir)
 
-    # Replace .claude docker volume with read-only bind mount for security
-    # This prevents container from modifying settings, hooks, or stealing API keys
+    # Trust-tiered ~/.claude config exposure.
+    #
+    # First, strip any pre-existing /home/node/.claude mount (the embedded
+    # devcontainer.json ships a live rw bind) and the old claude-code-config
+    # readonly-replace block, so we can append exactly the mount(s) the chosen
+    # trust tier wants -- same pattern as the ssh/gpg filtering below.
     if "mounts" in config:
         config["mounts"] = [
-            m.replace(
-                "source=claude-code-config-${devcontainerId},target=/home/node/.claude,type=volume",
-                "source=${localEnv:HOME}/.claude,target=/home/node/.claude,type=bind,readonly",
-            )
-            if "claude-code-config" in m
-            else m
-            for m in config["mounts"]
+            m for m in config["mounts"] if "/home/node/.claude" not in m and "claude-code-config" not in m
         ]
+
+    config.setdefault("mounts", [])
+    if trusted:
+        # TRUSTED: live read-write bind of the host ~/.claude -- the agent's
+        # config writes (settings, hooks, CLAUDE.md) land on the host directly.
+        # This is the historical behavior, now opt-in only.
+        config["mounts"].append("source=${localEnv:HOME}/.claude,target=/home/node/.claude,type=bind")
+    else:
+        # STRICT (default): mount a disposable COPY of the allowlisted config
+        # (staged on the host by stage_claude_config) at /home/node/.claude. It
+        # is rw inside the cage but the host ~/.claude is untouched, so the
+        # agent's config writes are discarded on exit.
+        #
+        # DEFERRED: vet-on-exit selective apply of the agent's config changes.
+        # Strict mode currently just discards them (safe); propagating approved
+        # changes back to the host is a follow-up.
+        if claude_stage_dir is not None:
+            config["mounts"].append(f"source={claude_stage_dir},target=/home/node/.claude,type=bind")
+        # Transcripts/session history are DATA, not config: write them back so
+        # session continuity (`--continue`) and the transcript hook keep working.
+        # These nested rw binds overlay the copied .claude with the live host
+        # data dirs. (settings/hooks/CLAUDE.md remain the copied, discard-on-exit
+        # part; only this transcript data is write-back safe.) Mount each only if
+        # the host path exists, so a fresh install doesn't fail on a missing dir.
+        home = Path.home()
+        if (home / ".claude" / "projects").exists():
+            config["mounts"].append(
+                "source=${localEnv:HOME}/.claude/projects,target=/home/node/.claude/projects,type=bind"
+            )
+        if (home / ".claude" / "history.jsonl").exists():
+            config["mounts"].append(
+                "source=${localEnv:HOME}/.claude/history.jsonl,target=/home/node/.claude/history.jsonl,type=bind"
+            )
 
     # Filter out existing SSH and GPG mounts
     if "mounts" in config:
@@ -156,6 +223,19 @@ def modify_config(
     if args.gpg_key_id:
         config.setdefault("mounts", [])
         config["mounts"].append("source=${localEnv:HOME}/.gnupg,target=/home/node/.gnupg,type=bind,readonly")
+
+    # Machine-local firewall allowlist supplement. If the host has a
+    # ~/.config/lamp-the-djinn/allowed-domains.txt, bind it read-only into the
+    # cage where init-firewall.sh expects it. The firewall script resolves these
+    # domains and adds them to the allowed-domains ipset (in addition to the
+    # baked-in whitelist), letting a host opt extra domains through egress
+    # without rebuilding the image.
+    allowed_domains = Path.home() / ".config" / "lamp-the-djinn" / "allowed-domains.txt"
+    if allowed_domains.exists():
+        config.setdefault("mounts", [])
+        config["mounts"].append(
+            f"source={allowed_domains},target=/usr/local/share/ltd-allowed-domains.txt,type=bind,readonly"
+        )
 
     # Read-only harness cache mount (only when the proxy/harness feature is engaged).
     # The trusted nightly refresh (scripts/refresh-harness-cache.sh) runs on the
@@ -188,6 +268,25 @@ def modify_config(
 
     # Add docker run flags (ports, volumes, env vars) to runArgs
     config.setdefault("runArgs", [])
+
+    # Per-cage memory cap (density default 2g). Strip any existing --memory=VALUE
+    # or `--memory VALUE` pair from runArgs, then append our resolved cap.
+    # --cpus / --pids-limit are left untouched.
+    memory = getattr(args, "memory", None) or "2g"
+    stripped_run_args: list[str] = []
+    skip_next = False
+    for run_arg in config["runArgs"]:
+        if skip_next:
+            skip_next = False
+            continue
+        if run_arg == "--memory":
+            skip_next = True  # also drop the separate value token that follows
+            continue
+        if run_arg.startswith("--memory="):
+            continue
+        stripped_run_args.append(run_arg)
+    config["runArgs"] = stripped_run_args
+    config["runArgs"].append(f"--memory={memory}")
 
     # Isolation seam: when a stronger OCI runtime than the stock runc was
     # resolved (e.g. gVisor's runsc or kata-runtime), tell Docker to use it.
@@ -366,6 +465,20 @@ def create_parser() -> argparse.ArgumentParser:
         "or a concrete name like 'runsc', 'kata-runtime', 'runc'. "
         "Env: LTD_RUNTIME",
     )
+    parser.add_argument(
+        "--trusted",
+        action="store_true",
+        help="Expose the host ~/.claude config READ-WRITE (live bind) instead of a "
+        "disposable copy. Governs config exposure only -- not runtime or firewall. "
+        "Default (strict) mounts an allowlisted copy so the agent never sees host "
+        "credentials and its config writes are discarded on exit. Env: LTD_TRUSTED",
+    )
+    parser.add_argument(
+        "--memory",
+        default=None,
+        metavar="LIMIT",
+        help="Per-cage memory cap passed to docker (default: 2g). Env: LTD_MEMORY",
+    )
     parser.add_argument("--shell", metavar="CMD", help="Run a shell command instead of the harness (for testing)")
     parser.add_argument(
         "--safe-mode",
@@ -422,6 +535,10 @@ def apply_env_defaults(args: argparse.Namespace) -> None:
     # Isolation runtime preference. "auto" picks gVisor when installed, else runc,
     # so stock-Docker hosts (runc-only) keep their existing behavior.
     args.runtime = args.runtime or os.environ.get("LTD_RUNTIME") or "auto"
+    # Trust tier for ~/.claude CONFIG exposure (default strict). Opt-in only.
+    args.trusted = args.trusted or bool(os.environ.get("LTD_TRUSTED"))
+    # Per-cage memory cap. Falls back to the 2g default inside modify_config.
+    args.memory = args.memory or os.environ.get("LTD_MEMORY")
 
 
 def run_devcontainer(
@@ -639,6 +756,14 @@ def main() -> None:
     auth_dir = Path.home() / ".cache" / "lamp-the-djinn" / "auth"
     auth_dir.mkdir(parents=True, exist_ok=True)
 
+    # Strict mode (default): stage a disposable, allowlisted copy of the host
+    # ~/.claude config into this instance's cache dir and mount THAT instead of
+    # the live host config. Trusted mode skips this and binds the host directly.
+    claude_stage_dir: Path | None = None
+    if not args.trusted:
+        claude_stage_dir = cache_dir / "claude-config-stage"
+        stage_claude_config(Path.home(), claude_stage_dir)
+
     # Load and modify config
     config = json.loads(source_config.read_text())
     config = modify_config(
@@ -651,6 +776,8 @@ def main() -> None:
         model=args.model,
         proxy_api_key=args.proxy_api_key,
         runtime=runtime,
+        trusted=args.trusted,
+        claude_stage_dir=claude_stage_dir,
     )
 
     # Write modified config back to the temp devcontainer dir

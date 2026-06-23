@@ -144,6 +144,41 @@ for domain in "${DOMAINS[@]}"; do
     done < <(echo "$ips")
 done
 
+# Machine-local allowlist supplement. The host can bind-mount an extra domains
+# file here (read-only) to open additional egress without rebuilding the image.
+# Same parse + resolve as the baked-in whitelist above; domains add to the same
+# allowed-domains ipset.
+SUPPLEMENT_FILE="/usr/local/share/ltd-allowed-domains.txt"
+SUPPLEMENT_DOMAINS=()
+if [ -f "$SUPPLEMENT_FILE" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip empty lines and comments
+        [[ -z "$line" || "$line" =~ ^# ]] && continue
+        SUPPLEMENT_DOMAINS+=("$line")
+    done < "$SUPPLEMENT_FILE"
+    log "Loaded ${#SUPPLEMENT_DOMAINS[@]} supplement domains from $SUPPLEMENT_FILE"
+    # audit_log only exists in the .devcontainer copy; guard so this block stays
+    # byte-identical to the embedded copy (which has no audit_log) under set -e.
+    command -v audit_log >/dev/null 2>&1 \
+        && audit_log "ALLOWLIST_ADD" "source=machine-local-supplement domains=${#SUPPLEMENT_DOMAINS[@]}"
+
+    for domain in "${SUPPLEMENT_DOMAINS[@]}"; do
+        ips=$(dig +noall +answer +time=5 +tries=2 A "$domain" | awk '$4 == "A" {print $5}')
+        if [ -z "$ips" ]; then
+            echo "WARNING: Failed to resolve supplement domain $domain (skipping)"
+            continue
+        fi
+        while read -r ip; do
+            if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+                echo "ERROR: Invalid IP from DNS for supplement domain $domain: $ip"
+                exit 1
+            fi
+            log "Adding $ip for supplement domain $domain"
+            ipset add allowed-domains "$ip" 2>/dev/null || true  # Ignore duplicates
+        done < <(echo "$ips")
+    done
+fi
+
 # Load user-approved domains from previous sessions
 ALLOWED_FILE="/home/node/.claude/.allowed-browser-domains"
 if [ -f "$ALLOWED_FILE" ]; then

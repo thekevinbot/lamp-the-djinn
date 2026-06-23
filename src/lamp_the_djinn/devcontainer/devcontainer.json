@@ -4,7 +4,7 @@
   "runArgs": [
     "--cap-add=NET_ADMIN",
     "--cap-add=NET_RAW",
-    "--memory=8g",
+    "--memory=2g",
     "--cpus=4",
     "--pids-limit=500"
   ],

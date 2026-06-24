@@ -1,5 +1,10 @@
-# Use Playwright base image which includes Node.js, Chromium, and all browser dependencies pre-installed
-FROM mcr.microsoft.com/playwright:v1.57.0-noble
+# Use Playwright base image which includes Node.js, Chromium, and all browser dependencies pre-installed.
+# PLAYWRIGHT_VERSION is the single source of truth: it tags the base image (which
+# bundles the matching browsers under /ms-playwright) AND pins the global
+# `playwright` CLI below. Keeping them equal is what stops the drift where a bare
+# `npx playwright` pulls a newer playwright whose browser revision isn't bundled.
+ARG PLAYWRIGHT_VERSION=1.57.0
+FROM mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble
 
 ARG TZ
 ENV TZ="$TZ"
@@ -52,6 +57,13 @@ COPY whitelisted-domains.txt /usr/local/share/whitelisted-domains.txt
 # Install Claude Code globally as root
 RUN --mount=type=cache,target=/root/.npm,sharing=locked \
   npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+
+# Install the Playwright CLI globally at the SAME version as the base image, so a
+# bare `npx playwright` finds this on-PATH binary instead of fetching latest --
+# whose browser revision wouldn't match the bundled /ms-playwright browsers.
+ARG PLAYWRIGHT_VERSION
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+  npm install -g playwright@${PLAYWRIGHT_VERSION}
 
 # Rename existing UID 1000 user to 'node' for devcontainer compatibility
 # The Playwright image may have 'pwuser' or 'ubuntu' user at UID 1000 depending on version

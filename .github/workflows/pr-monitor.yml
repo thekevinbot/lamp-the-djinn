@@ -11,6 +11,8 @@ jobs:
     name: 'Check Commit Status'
     runs-on: ubuntu-latest
     steps:
-      - uses: clankerbot/pr-monitor@v1
-        with:
-          job-name: 'Check Commit Status'
+      # SHA-pinned, not @v1: the v1 tag is stale and still requires the deprecated
+      # `job-name` input to exclude itself (name-based). Without it the gate waits on
+      # its own run and times out. This commit on main excludes its own workflow run
+      # by run ID (context.runId), so no job-name is needed. Pin is immutable.
+      - uses: thekevinscott/pr-monitor@0dfd99aa5a1ea443e14a82ba0fc9a0977f5e83b3

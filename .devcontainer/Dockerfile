@@ -70,7 +70,7 @@ RUN OLD_USER=$(getent passwd 1000 | cut -d: -f1) && \
   mkdir /commandhistory && \
   touch /commandhistory/.bash_history && \
   chown -R node /commandhistory && \
-  mkdir -p /workspace /home/node/.claude && \
+  mkdir -p /workspace /home/node/.claude /home/node/.config && \
   chown -R node:node /workspace /home/node/.claude /home/node
 
 # Set environment variables

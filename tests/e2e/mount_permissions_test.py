@@ -149,3 +149,50 @@ def describe_mounting_a_single_file_under_the_cage_home():
             f"permission-denied seen: {denied}). This is the EACCES that breaks "
             f"`ltd -v ~/.pi/agent/models.json npx ... pi`.\n{combined}"
         )
+
+
+def describe_the_cage_config_dir():
+    """`~/.config` must be writable by the cage user, or postStartCommand dies.
+
+    THE BUG THIS PINS. The always-on credential-persistence mount targets
+    `/home/node/.config/ltd-auth`. The image never creates `/home/node/.config`,
+    so Docker auto-creates that PARENT owned by ROOT. A bare `ltd` survives (it
+    writes nothing under ~/.config), but `--gh-token` makes the postStartCommand
+    run `gh auth login`, whose first act is `mkdir ~/.config/gh` as user `node` ->
+    `permission denied`, and the WHOLE cage launch fails before the agent starts.
+
+    WHY A PURE FILESYSTEM PROBE. The fault is ownership of the auto-created
+    `~/.config`, nothing to do with gh or a token. So this cell runs the exact
+    operation gh fails on -- `mkdir -p ~/.config/gh` -- inside a bare cage and
+    asserts it succeeds. It is RED on the shipped image today (root-owned
+    ~/.config) and GREEN only once the image pre-creates ~/.config node-owned.
+
+    Same deploy-skew discipline as the rest of tests/e2e: exercise the installed
+    `ltd` console script, no proxy needed.
+    """
+
+    def it_lets_the_cage_user_create_subdirs_under_config(reap_cages):
+        ltd = _require_infra()
+        argv = [
+            ltd,
+            "--runtime",
+            "runc",
+            "sh",
+            "-c",
+            f"mkdir -p ~/.config/gh && echo {SENTINEL}",
+        ]
+        result = subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            env={**os.environ},
+            timeout=600,
+        )
+        combined = f"{result.stdout}\n{result.stderr}"
+        denied = "permission denied" in combined.lower() or "eacces" in combined.lower()
+        assert SENTINEL in result.stdout, (
+            "the cage's ~/.config is not writable by the cage user -- `mkdir ~/.config/gh` "
+            f"failed (rc={result.returncode}, permission-denied seen: {denied}). This is the "
+            f"failure that breaks `ltd --gh-token ...` in postStartCommand (gh auth login).\n{combined}"
+        )

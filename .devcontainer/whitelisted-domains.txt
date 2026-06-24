@@ -44,11 +44,13 @@ static.crates.io
 proxy.golang.org
 sum.golang.org
 
-# Anthropic services
-api.anthropic.com
-sentry.io
-statsig.anthropic.com
-statsig.com
+# NOTE: Claude's telemetry/auth hosts (api.anthropic.com, statsig.anthropic.com,
+# statsig.com, sentry.io) are deliberately NOT here. The cage reaches the model
+# only through the host proxy -- the key never enters the cage -- so the API host
+# is not needed inside, and statsig.anthropic.com (which doesn't resolve off
+# Anthropic's network) printed a resolve WARNING on every start. An isolation
+# cage should not phone telemetry home. If you run a harness that genuinely needs
+# a direct host, add it per-cage with `ltd --allow-domains-file`.
 
 # VS Code
 marketplace.visualstudio.com

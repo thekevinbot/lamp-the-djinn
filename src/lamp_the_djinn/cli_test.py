@@ -680,6 +680,29 @@ def describe_allowlist_supplement_mount():
         assert not any("ltd-allowed-domains.txt" in m for m in _mounts(config))
 
 
+def describe_shipped_firewall_whitelist():
+    """The baked-in egress allowlist must not carry Claude's telemetry/auth hosts.
+
+    The cage reaches the model only through the host proxy (the key never enters
+    the cage), so api.anthropic.com is not needed inside; statsig.* / sentry.io
+    are pure telemetry an isolation cage should not phone home to. Leaving them in
+    also prints a `Failed to resolve statsig.anthropic.com` WARNING every run,
+    since that host doesn't resolve off Anthropic's network.
+    """
+
+    _WHITELIST = Path(__file__).parent / "devcontainer" / "whitelisted-domains.txt"
+    _FORBIDDEN = ("anthropic.com", "statsig.com", "sentry.io")
+
+    def it_lists_no_anthropic_or_telemetry_domains():
+        lines = [
+            line.strip()
+            for line in _WHITELIST.read_text().splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        leaked = [d for d in lines if any(bad in d for bad in _FORBIDDEN)]
+        assert not leaked, f"whitelist still ships telemetry/anthropic domains: {leaked}"
+
+
 def describe_allow_domains_file_mount():
     """--allow-domains-file mounts a per-run domains file read-only into the cage."""
 

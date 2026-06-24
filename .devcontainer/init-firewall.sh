@@ -144,6 +144,41 @@ for domain in "${DOMAINS[@]}"; do
     done < <(echo "$ips")
 done
 
+# Machine-local allowlist supplement. The host can bind-mount an extra domains
+# file here (read-only) to open additional egress without rebuilding the image.
+# Same parse + resolve as the baked-in whitelist above; domains add to the same
+# allowed-domains ipset.
+SUPPLEMENT_FILE="/usr/local/share/ltd-allowed-domains.txt"
+SUPPLEMENT_DOMAINS=()
+if [ -f "$SUPPLEMENT_FILE" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip empty lines and comments
+        [[ -z "$line" || "$line" =~ ^# ]] && continue
+        SUPPLEMENT_DOMAINS+=("$line")
+    done < "$SUPPLEMENT_FILE"
+    log "Loaded ${#SUPPLEMENT_DOMAINS[@]} supplement domains from $SUPPLEMENT_FILE"
+    # audit_log only exists in the .devcontainer copy; guard so this block stays
+    # byte-identical to the embedded copy (which has no audit_log) under set -e.
+    command -v audit_log >/dev/null 2>&1 \
+        && audit_log "ALLOWLIST_ADD" "source=machine-local-supplement domains=${#SUPPLEMENT_DOMAINS[@]}"
+
+    for domain in "${SUPPLEMENT_DOMAINS[@]}"; do
+        ips=$(dig +noall +answer +time=5 +tries=2 A "$domain" | awk '$4 == "A" {print $5}')
+        if [ -z "$ips" ]; then
+            echo "WARNING: Failed to resolve supplement domain $domain (skipping)"
+            continue
+        fi
+        while read -r ip; do
+            if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+                echo "ERROR: Invalid IP from DNS for supplement domain $domain: $ip"
+                exit 1
+            fi
+            log "Adding $ip for supplement domain $domain"
+            ipset add allowed-domains "$ip" 2>/dev/null || true  # Ignore duplicates
+        done < <(echo "$ips")
+    done
+fi
+
 # Load user-approved domains from previous sessions
 ALLOWED_FILE="/home/node/.claude/.allowed-browser-domains"
 if [ -f "$ALLOWED_FILE" ]; then
@@ -170,7 +205,28 @@ log "Host network detected as: $HOST_NETWORK"
 
 # Set up remaining iptables rules
 iptables -A INPUT -s "$HOST_NETWORK" -j ACCEPT
-iptables -A OUTPUT -d "$HOST_NETWORK" -j ACCEPT
+
+# Host LAN egress.
+# By DEFAULT we allow OUTPUT to the entire host /24 ($HOST_NETWORK). That is a
+# broad allowance: it opens the whole local subnet (every machine on the host's
+# LAN), not just the model proxy. This default is unchanged.
+#
+# OPT-IN tightening (off unless both env vars are set): if LTD_EGRESS_PROXY_ONLY
+# is non-empty AND LTD_PROXY_HOST is set, allow OUTPUT only to that single proxy
+# host instead of the whole /24. This is the "proxy-only egress" mode.
+# UNVERIFIED: requires a real container with NET_ADMIN to test
+if [ -n "${LTD_EGRESS_PROXY_ONLY:-}" ] && [ -n "${LTD_PROXY_HOST:-}" ]; then
+    # UNVERIFIED: requires a real container with NET_ADMIN to test
+    log "Egress tightening: allowing host egress only to proxy $LTD_PROXY_HOST"
+    iptables -A OUTPUT -d "$LTD_PROXY_HOST" -j ACCEPT
+    # audit_log only exists in the .devcontainer copy; guard so the block stays
+    # identical to the embedded copy (which has no audit_log) under set -e.
+    command -v audit_log >/dev/null 2>&1 && audit_log "EGRESS_POLICY" "mode=proxy-only proxy_host=$LTD_PROXY_HOST"
+else
+    # UNVERIFIED: requires a real container with NET_ADMIN to test
+    iptables -A OUTPUT -d "$HOST_NETWORK" -j ACCEPT
+    command -v audit_log >/dev/null 2>&1 && audit_log "EGRESS_POLICY" "mode=host-lan network=$HOST_NETWORK"
+fi
 
 # Set default policies to DROP first
 iptables -P INPUT DROP

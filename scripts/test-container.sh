@@ -6,7 +6,7 @@ set -e
 echo "Running Container Integration Test..."
 echo ""
 
-CLANKERCAGE_DIR="$HOME/.claude/clankercage"
+LTD_DIR="$HOME/.claude/lamp-the-djinn"
 CONFIG="$HOME/.claude/.devcontainer/devcontainer.json"
 
 # Check devcontainer.json exists
@@ -58,7 +58,7 @@ echo ""
 
 # Run tests inside container
 echo "Step 4: Running tests inside container..."
-if npx -y @devcontainers/cli exec --workspace-folder . --config "$CONFIG" bash "$CLANKERCAGE_DIR/scripts/run-tests.sh"; then
+if npx -y @devcontainers/cli exec --workspace-folder . --config "$CONFIG" bash "$LTD_DIR/scripts/run-tests.sh"; then
     echo ""
     echo "================================"
     echo "✓ Container integration test passed"

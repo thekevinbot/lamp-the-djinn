@@ -1,83 +1,19 @@
 """
-Tests for the clankercage CLI.
+End-to-end tests for the lamp-the-djinn CLI.
 
-These tests verify that:
-- The CLI correctly mounts local directories
-- The --shell flag works for non-interactive testing
+These spin up a real cage via the actual `ltd`/`lamp-the-djinn` CLI (`uv run
+lamp-the-djinn --shell ...`) and assert on real container behavior: workspace
+mounting (path identity), installed tooling, SSH, and claude flag pass-through.
+Slow; requires Docker.
 """
 
 import subprocess
 import uuid
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
-from clankercage.cli import get_container_info
-
-
-def describe_get_container_info():
-    """Unit tests for get_container_info function."""
-
-    def it_parses_ghcr_image_labels():
-        """Test parsing labels from a ghcr.io built image."""
-        mock_result = mock.Mock()
-        mock_result.returncode = 0
-        mock_result.stdout = "2025-01-15T10:30:00Z|ghcr.io"
-
-        with mock.patch("subprocess.run", return_value=mock_result):
-            info = get_container_info("ghcr.io/test/image:latest")
-
-        assert info["build_time"] == "2025-01-15T10:30:00Z"
-        assert info["source"] == "ghcr.io"
-
-    def it_parses_local_image_labels():
-        """Test parsing labels from a locally built image."""
-        mock_result = mock.Mock()
-        mock_result.returncode = 0
-        mock_result.stdout = "2025-01-15T10:30:00Z|local"
-
-        with mock.patch("subprocess.run", return_value=mock_result):
-            info = get_container_info("my-local-image:latest")
-
-        assert info["build_time"] == "2025-01-15T10:30:00Z"
-        assert info["source"] == "local"
-
-    def it_handles_missing_labels():
-        """Test handling images without labels."""
-        mock_result = mock.Mock()
-        mock_result.returncode = 0
-        mock_result.stdout = "|"
-
-        with mock.patch("subprocess.run", return_value=mock_result):
-            info = get_container_info("image-without-labels:latest")
-
-        assert info["build_time"] == "unknown"
-        assert info["source"] == "local"
-
-    def it_handles_docker_inspect_failure():
-        """Test handling when docker inspect fails."""
-        mock_result = mock.Mock()
-        mock_result.returncode = 1
-        mock_result.stdout = ""
-
-        with mock.patch("subprocess.run", return_value=mock_result):
-            info = get_container_info("nonexistent:latest")
-
-        assert info["build_time"] == "unknown"
-        assert info["source"] == "unknown"
-
-    def it_handles_partial_labels():
-        """Test handling when only build_time label exists."""
-        mock_result = mock.Mock()
-        mock_result.returncode = 0
-        mock_result.stdout = "2025-01-15T10:30:00Z|"
-
-        with mock.patch("subprocess.run", return_value=mock_result):
-            info = get_container_info("partial-labels:latest")
-
-        assert info["build_time"] == "2025-01-15T10:30:00Z"
-        assert info["source"] == "local"
+pytestmark = pytest.mark.e2e
 
 
 @pytest.fixture
@@ -99,8 +35,8 @@ def run_clanker(
     ssh_key_file: str | None = None,
     build: bool = False,
 ) -> subprocess.CompletedProcess:
-    """Run clankercage with --shell in a given project directory."""
-    cmd = ["uv", "run", "clankercage", "--shell", shell_cmd]
+    """Run lamp-the-djinn with --shell in a given project directory."""
+    cmd = ["uv", "run", "lamp-the-djinn", "--shell", shell_cmd]
 
     if build:
         cmd.append("--build")
@@ -120,24 +56,20 @@ def run_clanker(
 def describe_workspace_mounting():
     """Tests for workspace directory mounting."""
 
-    @pytest.mark.integration
-    def it_mounts_local_directory_to_workspace(workspace_path: Path):
-        """Verify that the local directory is mounted at /workspace in the container."""
+    def it_mounts_local_directory_at_its_own_path(workspace_path: Path):
+        """The local dir mounts at its OWN host path inside the cage (path identity)."""
         # Create a unique file in the temp directory
-        marker = f"clanker-test-{uuid.uuid4()}"
+        marker = f"ltd-test-{uuid.uuid4()}"
         marker_file = workspace_path / "test-marker.txt"
         marker_file.write_text(marker)
         marker_file.chmod(0o644)  # Readable by container's node user
 
-        # Run clankercage and check if the file exists in /workspace
-        result = run_clanker(workspace_path, "cat /workspace/test-marker.txt")
+        # Inside the cage the path is identical to the host path.
+        result = run_clanker(workspace_path, f"cat {workspace_path}/test-marker.txt")
 
         assert result.returncode == 0, f"Command failed: {result.stderr}"
-        assert marker in result.stdout, (
-            f"Expected marker '{marker}' not found in output: {result.stdout}"
-        )
+        assert marker in result.stdout, f"Expected marker '{marker}' not found in output: {result.stdout}"
 
-    @pytest.mark.integration
     def it_can_write_files_back_to_host(workspace_path: Path):
         """Verify that files written in /workspace appear on the host."""
         marker = f"written-from-container-{uuid.uuid4()}"
@@ -147,18 +79,15 @@ def describe_workspace_mounting():
         workspace_path.chmod(0o777)
 
         # Write a file from inside the container
-        result = run_clanker(workspace_path, f"echo '{marker}' > /workspace/{output_file}")
+        result = run_clanker(workspace_path, f"echo '{marker}' > {workspace_path}/{output_file}")
 
         assert result.returncode == 0, f"Command failed: {result.stderr}"
 
         # Verify the file exists on the host
         host_file = workspace_path / output_file
         assert host_file.exists(), f"File not created on host: {host_file}"
-        assert marker in host_file.read_text(), (
-            f"Expected marker not in file contents: {host_file.read_text()}"
-        )
+        assert marker in host_file.read_text(), f"Expected marker not in file contents: {host_file.read_text()}"
 
-    @pytest.mark.integration
     def it_preserves_file_permissions(workspace_path: Path):
         """Verify that file permissions are preserved through the mount."""
         script = workspace_path / "test-script.sh"
@@ -166,28 +95,22 @@ def describe_workspace_mounting():
         script.chmod(0o755)
 
         # Check the file is executable inside the container
-        result = run_clanker(workspace_path, "test -x /workspace/test-script.sh && echo 'executable'")
+        result = run_clanker(workspace_path, f"test -x {workspace_path}/test-script.sh && echo 'executable'")
 
         assert result.returncode == 0, f"Command failed: {result.stderr}"
-        assert "executable" in result.stdout, (
-            f"File not executable in container: {result.stdout}"
-        )
+        assert "executable" in result.stdout, f"File not executable in container: {result.stdout}"
 
-    @pytest.mark.integration
     def it_shows_correct_working_directory(workspace_path: Path):
-        """Verify that pwd shows /workspace."""
+        """pwd shows the real host path (path identity), not /workspace."""
         result = run_clanker(workspace_path, "pwd")
 
         assert result.returncode == 0, f"Command failed: {result.stderr}"
-        assert "/workspace" in result.stdout, (
-            f"Expected /workspace, got: {result.stdout}"
-        )
+        assert str(workspace_path) in result.stdout, f"Expected {workspace_path}, got: {result.stdout}"
 
 
 def describe_installed_tools():
     """Tests for tools that should be available in the container."""
 
-    @pytest.mark.integration
     def it_has_uv_available(workspace_path: Path):
         """Verify uv is installed."""
         result = run_clanker(workspace_path, "uv --version")
@@ -195,38 +118,31 @@ def describe_installed_tools():
         assert result.returncode == 0, f"uv not available: {result.stderr}"
         assert "uv" in result.stdout, f"Unexpected uv output: {result.stdout}"
 
-    @pytest.mark.integration
     def it_has_uvx_available(workspace_path: Path):
         """Verify uvx is installed."""
         result = run_clanker(workspace_path, "uvx --version")
 
         assert result.returncode == 0, f"uvx not available: {result.stderr}"
 
-    @pytest.mark.integration
     def it_has_npm_available(workspace_path: Path):
         """Verify npm is installed."""
         result = run_clanker(workspace_path, "npm --version")
 
         assert result.returncode == 0, f"npm not available: {result.stderr}"
 
-    @pytest.mark.integration
     def it_has_pnpm_available(workspace_path: Path):
         """Verify pnpm is installed."""
         result = run_clanker(workspace_path, "pnpm --version")
 
         assert result.returncode == 0, f"pnpm not available: {result.stderr}"
 
-    @pytest.mark.integration
     def it_has_playwright_available(workspace_path: Path):
         """Verify playwright is installed and browsers are available."""
         result = run_clanker(workspace_path, "npx playwright --version")
 
         assert result.returncode == 0, f"Playwright not available: {result.stderr}"
-        assert "Version" in result.stdout or result.stdout.strip(), (
-            f"Unexpected playwright output: {result.stdout}"
-        )
+        assert "Version" in result.stdout or result.stdout.strip(), f"Unexpected playwright output: {result.stdout}"
 
-    @pytest.mark.integration
     def it_can_run_playwright_chromium(workspace_path: Path):
         """Verify playwright can launch chromium browser."""
         # Make workspace writable for screenshot output
@@ -270,12 +186,21 @@ def ssh_server(tmp_path_factory):
     container_name = f"test-sshd-{uuid.uuid4().hex[:8]}"
     subprocess.run(
         [
-            "docker", "run", "-d",
-            "--name", container_name,
-            "-e", "PUID=1000", "-e", "PGID=1000",
-            "-e", "USER_NAME=git",
-            "-e", "PASSWORD_ACCESS=false",
-            "-v", f"{ssh_dir}:/config/.ssh",
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "-e",
+            "PUID=1000",
+            "-e",
+            "PGID=1000",
+            "-e",
+            "USER_NAME=git",
+            "-e",
+            "PASSWORD_ACCESS=false",
+            "-v",
+            f"{ssh_dir}:/config/.ssh",
             "lscr.io/linuxserver/openssh-server:latest",
         ],
         check=True,
@@ -284,7 +209,10 @@ def ssh_server(tmp_path_factory):
 
     # Wait for sshd
     for _ in range(30):
-        if subprocess.run(["docker", "exec", container_name, "pgrep", "-f", "sshd"], capture_output=True).returncode == 0:
+        if (
+            subprocess.run(["docker", "exec", container_name, "pgrep", "-f", "sshd"], capture_output=True).returncode
+            == 0
+        ):
             break
         time.sleep(1)
     time.sleep(2)
@@ -292,7 +220,9 @@ def ssh_server(tmp_path_factory):
     # Get container IP
     ip = subprocess.run(
         ["docker", "inspect", container_name, "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout.strip()
 
     yield {"key": str(private_key), "ip": ip, "port": 2222, "container": container_name}
@@ -303,12 +233,11 @@ def ssh_server(tmp_path_factory):
 def describe_ssh():
     """SSH test using a local SSH server that mimics GitHub's behavior."""
 
-    @pytest.mark.integration
     @pytest.mark.skip(reason="SSH config bind mount has permission issues in CI - needs container-native solution")
     def it_can_ssh_to_server_via_clanker(workspace_path: Path, ssh_server):
-        """Test SSH via clankercagecage CLI - mirrors: uv run clanker --ssh-key-file KEY --shell 'ssh -T git@server'.
+        """Test SSH via lamp-the-djinn CLI - mirrors: uv run lamp-the-djinn --ssh-key-file KEY --shell 'ssh -T git@server'.
 
-        This test MUST use the real clankercage CLI, not docker run directly.
+        This test MUST use the real lamp-the-djinn CLI, not docker run directly.
         If this test passes but the real command fails, the test is wrong.
 
         NOTE: SSH mounts must be specified from the FIRST run. If a container is started
@@ -323,7 +252,8 @@ def describe_ssh():
         # Get server's host key and save to workspace (mounted at /workspace)
         keyscan = subprocess.run(
             ["ssh-keyscan", "-p", str(ssh_server["port"]), ssh_server["ip"]],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         known_hosts = workspace_path / "server_known_hosts"
         known_hosts.write_text(keyscan.stdout)
@@ -340,7 +270,7 @@ def describe_ssh():
         )
 
         assert result.returncode == 0, (
-            f"SSH via clankercage failed.\nstderr: {result.stderr}\nstdout: {result.stdout}"
+            f"SSH via lamp-the-djinn failed.\nstderr: {result.stderr}\nstdout: {result.stdout}"
         )
         assert "success" in result.stdout, (
             f"Expected 'success' in output.\nstdout: {result.stdout}\nstderr: {result.stderr}"
@@ -352,8 +282,13 @@ def run_claude(
     claude_args: list[str],
     timeout: int = 120,
 ) -> subprocess.CompletedProcess:
-    """Run clankercage with claude (not --shell) in a given project directory."""
-    cmd = ["uv", "run", "clankercage"] + claude_args
+    """Run lamp-the-djinn with claude (not --shell) in a given project directory.
+
+    The command is now explicit pass-through: everything after ltd's own options
+    is the in-cage command. So claude flags must follow an explicit `claude`
+    token (e.g. `ltd claude -p "..."`); ltd no longer infers the harness.
+    """
+    cmd = ["uv", "run", "lamp-the-djinn", "claude"] + claude_args
 
     return subprocess.run(
         cmd,
@@ -367,7 +302,6 @@ def run_claude(
 def describe_claude_flag_passthrough():
     """Tests for passing arbitrary flags to claude."""
 
-    @pytest.mark.integration
     @pytest.mark.claude
     @pytest.mark.skip(reason="Requires Claude API key and writable .claude directory - run manually")
     def it_passes_continue_flag_to_claude(workspace_path: Path):
@@ -390,9 +324,7 @@ def describe_claude_flag_passthrough():
         )
 
         assert result1.returncode == 0, f"First claude run failed: {result1.stderr}"
-        assert "2" in result1.stdout, (
-            f"Expected '2' in first response: {result1.stdout}"
-        )
+        assert "2" in result1.stdout, f"Expected '2' in first response: {result1.stdout}"
 
         # Second run with --continue - add 1 again
         result2 = run_claude(
@@ -402,8 +334,4 @@ def describe_claude_flag_passthrough():
         )
 
         assert result2.returncode == 0, f"Second claude run failed: {result2.stderr}"
-        assert "3" in result2.stdout, (
-            f"Expected '3' in continued response (1+1+1=3): {result2.stdout}"
-        )
-
-
+        assert "3" in result2.stdout, f"Expected '3' in continued response (1+1+1=3): {result2.stdout}"

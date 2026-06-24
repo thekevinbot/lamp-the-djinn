@@ -6,8 +6,8 @@ All tests spin up a real devcontainer and run commands inside it.
 
 import subprocess
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 
 import pytest
 
@@ -24,9 +24,14 @@ class DevContainer:
         """Start the devcontainer."""
         result = subprocess.run(
             [
-                "npx", "-y", "@devcontainers/cli", "up",
-                "--workspace-folder", self.workspace_dir,
-                "--config", str(self.config_path),
+                "npx",
+                "-y",
+                "@devcontainers/cli",
+                "up",
+                "--workspace-folder",
+                self.workspace_dir,
+                "--config",
+                str(self.config_path),
             ],
             capture_output=True,
             text=True,
@@ -42,10 +47,17 @@ class DevContainer:
             raise RuntimeError("Container not started")
         return subprocess.run(
             [
-                "npx", "-y", "@devcontainers/cli", "exec",
-                "--workspace-folder", self.workspace_dir,
-                "--config", str(self.config_path),
-                "bash", "-c", command,
+                "npx",
+                "-y",
+                "@devcontainers/cli",
+                "exec",
+                "--workspace-folder",
+                self.workspace_dir,
+                "--config",
+                str(self.config_path),
+                "bash",
+                "-c",
+                command,
             ],
             capture_output=True,
             text=True,
@@ -57,9 +69,14 @@ class DevContainer:
         if self._started:
             subprocess.run(
                 [
-                    "npx", "-y", "@devcontainers/cli", "down",
-                    "--workspace-folder", self.workspace_dir,
-                    "--config", str(self.config_path),
+                    "npx",
+                    "-y",
+                    "@devcontainers/cli",
+                    "down",
+                    "--workspace-folder",
+                    self.workspace_dir,
+                    "--config",
+                    str(self.config_path),
                 ],
                 capture_output=True,
                 timeout=60,

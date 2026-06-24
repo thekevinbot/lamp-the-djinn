@@ -31,19 +31,12 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Create virtual environment
-        run: uv venv
-
-      - name: Install dependencies
-        run: uv pip install -e ".[dev]"
+      - name: Install project + dev dependencies
+        run: uv sync --extra dev --python 3.12
 
       - name: Run unit tests
-        run: |
-          # Allow exit code 5 (no tests collected) since all tests may be integration tests
-          uv run pytest tests/test_cli.py -v -m "not integration" || test $? -eq 5
+        # Unit tier: colocated next to source (src/**/*_test.py), marked `unit`.
+        run: uv run pytest src -m unit
 
   integration-tests:
     name: Integration Tests
@@ -52,23 +45,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Create virtual environment
-        run: uv venv
-
-      - name: Install dependencies
-        run: uv pip install -e ".[dev]"
-
-      - name: Create .claude directory
-        run: mkdir -p ~/.claude
+      - name: Install project + dev dependencies
+        run: uv sync --extra dev --python 3.12
 
       - name: Run integration tests
-        run: uv run pytest tests/test_cli.py -v -m "integration"
+        # Integration tier (tests/integration), marked `integration`: first-party
+        # code runs for real against the host filesystem/env; collaborators
+        # (Docker, subprocess, network) are mocked, so no container is needed.
+        run: uv run pytest tests/integration -m integration

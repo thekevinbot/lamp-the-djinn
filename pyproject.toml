@@ -1,12 +1,12 @@
 [project]
-name = "clankercage"
-version = "0.1.0"
-description = "A sandboxed Claude Code devcontainer runner"
+name = "lamp-the-djinn"
+dynamic = ["version"]
+description = "A sandboxed runner for any coding agent — harness- and model-agnostic"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
-    { name = "clankerbot", email = "248217931+clankerbot@users.noreply.github.com" }
+    { name = "thekevinbot", email = "thekevinbot@users.noreply.github.com" }
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -22,12 +22,13 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/clankerbot/clankercage"
-Repository = "https://github.com/clankerbot/clankercage"
+Homepage = "https://github.com/thekevinbot/lamp-the-djinn"
+Repository = "https://github.com/thekevinbot/lamp-the-djinn"
 
 [project.scripts]
-clankercage = "clankercage.cli:main"
-clankercage-remote = "clankercage.cli:shell_remote"
+lamp-the-djinn = "lamp_the_djinn.cli:main"
+ltd = "lamp_the_djinn.cli:main"
+lamp-the-djinn-remote = "lamp_the_djinn.cli:shell_remote"
 
 [project.optional-dependencies]
 dev = [
@@ -35,27 +36,108 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-describe>=2.2.0",
     "pytest-watcher>=0.4.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.13.0",
+    "mypy>=1.11.0",
+    # Real-PTY driver for the interactive e2e agent cells. Requires Python >=3.12;
+    # gated so the package's own >=3.10 floor still resolves. Interactive e2e is
+    # never run in CI, so a 3.10/3.11 dev simply skips those cells.
+    "curtaincall>=0.3.0 ; python_version >= '3.12'",
 ]
+# testing-conventions is a standalone rule-checking BINARY, not a library the code
+# imports, so it is deliberately NOT a project dependency (its Rust-binary wheels
+# would pollute resolution). It runs in CI via the reusable workflow drop-in
+# (.github/workflows/conventions.yml) and locally via `uvx testing-conventions`.
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_functions = ["test_* describe_*"]
+# Unit tests are COLOCATED next to source (src/**/*_test.py); integration and
+# e2e tests live under tests/. Both roots are scanned.
+testpaths = ["src", "tests"]
+# Accept both classic test_*.py and colocated *_test.py unit tests.
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+# Treat async tests as asyncio without per-test markers (pytest-asyncio).
+asyncio_mode = "auto"
 addopts = [
     "-v",
     "--tb=short",
     "--strict-markers",
 ]
+# Three test tiers. Unit lives next to source (src/**/*_test.py); integration
+# and e2e live under tests/. Select a tier with `-m unit` / `-m integration` /
+# `-m e2e`. --strict-markers makes a typo in a marker fail collection rather
+# than silently skip.
+markers = [
+    "unit: pure logic, no third party touched at all (fast; the default tier).",
+    "integration: collaborators (Docker, subprocess, network) are mocked out -- no real containers.",
+    "e2e: spins up a real container via the actual `ltd` CLI; slow, requires Docker.",
+    "claude: needs a real Claude API key and writable .claude; skipped in CI, run manually.",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+# deprecated/ is a frozen legacy tree -- never lint or reformat it.
+extend-exclude = ["deprecated"]
+
+[tool.ruff.lint]
+# E/F: pycodestyle + pyflakes; I: import sorting; UP: pyupgrade; B: bugbear.
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests favor readability over lint purity (assert-heavy, fixtures, long lines).
+"tests/**" = ["E501", "B011", "B017"]
+# Colocated unit tests (src/**/*_test.py) get the same leniency as tests/.
+"**/*_test.py" = ["E501", "B011", "B017"]
+# Legacy tree stays lenient even if it is ever re-included.
+"deprecated/**" = ["ALL"]
+
+[tool.mypy]
+python_version = "3.10"
+# Lenient to start: this is legacy code; tighten later (see internals/python/testing.md).
+ignore_missing_imports = true
+check_untyped_defs = false
+# Only type-check the shipped package; deprecated/ and tests are out of scope.
+files = ["src/lamp_the_djinn"]
+# Colocated unit tests live in src/ but are not shipped code -- skip them.
+exclude = ["deprecated/", ".*_test\\.py$"]
+
+[tool.coverage.run]
+branch = true
+source = ["src/lamp_the_djinn"]
+omit = [
+    # The devcontainer/* tree is shipped data (shell, Dockerfile, json), not Python.
+    "src/lamp_the_djinn/devcontainer/*",
+    # Colocated unit tests are not production code; don't count them as covered.
+    "src/lamp_the_djinn/*_test.py",
+]
+
+[tool.coverage.report]
+# Aspirational target. NOT enforced here: most tests need Docker and are skipped
+# in unit CI, so a hard gate would falsely fail. Enable once unit coverage is
+# representative.
+# fail_under = 85
+show_missing = true
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+# Shallow clones / tagless checkouts still resolve to a usable dev version.
+fallback_version = "0.1.0"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/clankercage"]
-artifacts = ["src/clankercage/devcontainer/*"]
+packages = ["src/lamp_the_djinn"]
+artifacts = ["src/lamp_the_djinn/devcontainer/*"]
+# Colocated unit tests (*_test.py) are dev-only; keep them out of the wheel.
+exclude = ["**/*_test.py"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "src/clankercage/**/*",
+    "src/lamp_the_djinn/**/*",
 ]
+exclude = ["**/*_test.py"]

@@ -1,0 +1,14 @@
+[Unit]
+Description=lamp-the-djinn: daily harness cache refresh
+Documentation=https://github.com/thekevinbot/lamp-the-djinn
+
+[Timer]
+# Fire once a day. Persistent=true runs a missed job on next boot/login
+# (e.g. if the machine was off at the scheduled time).
+OnCalendar=daily
+Persistent=true
+# Spread load / avoid registry thundering-herd at the exact same instant.
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

@@ -8,14 +8,14 @@ These tests verify that:
 """
 
 import pytest
-
 from conftest import DevContainer
+
+pytestmark = pytest.mark.e2e
 
 
 def describe_container():
     """Tests for basic container functionality."""
 
-    @pytest.mark.integration
     def it_has_claude_installed(devcontainer: DevContainer):
         """Verify that Claude Code is installed and accessible."""
         result = devcontainer.exec("claude --version", timeout=30)
@@ -24,7 +24,6 @@ def describe_container():
             f"Unexpected claude version output: {result.stdout}"
         )
 
-    @pytest.mark.integration
     def it_has_required_tools(devcontainer: DevContainer):
         """Verify that required development tools are installed."""
         # Note: Docker CLI was removed (issue #45) - socket is not mounted for security
@@ -34,16 +33,12 @@ def describe_container():
             result = devcontainer.exec(f"which {tool}", timeout=10)
             assert result.returncode == 0, f"{tool} not found in container"
 
-    @pytest.mark.integration
     def it_runs_as_non_root_user(devcontainer: DevContainer):
         """Verify that the container runs as a non-root user."""
         result = devcontainer.exec("whoami", timeout=10)
         assert result.returncode == 0
-        assert result.stdout.strip() == "node", (
-            f"Expected user 'node', got '{result.stdout.strip()}'"
-        )
+        assert result.stdout.strip() == "node", f"Expected user 'node', got '{result.stdout.strip()}'"
 
-    @pytest.mark.integration
     def it_has_firewall_initialized(devcontainer: DevContainer):
         """Verify that the firewall is set up correctly."""
         # Check that the allowed-domains ipset exists
@@ -52,11 +47,8 @@ def describe_container():
             timeout=10,
         )
         assert result.returncode == 0, f"ipset not configured: {result.stderr}"
-        assert "allowed-domains" in result.stdout, (
-            f"allowed-domains ipset not found: {result.stdout}"
-        )
+        assert "allowed-domains" in result.stdout, f"allowed-domains ipset not found: {result.stdout}"
 
-    @pytest.mark.integration
     def it_has_iptables_rules(devcontainer: DevContainer):
         """Verify that iptables OUTPUT policy is DROP."""
         result = devcontainer.exec(
@@ -69,7 +61,6 @@ def describe_container():
             f"OUTPUT policy should be DROP: {result.stdout}"
         )
 
-    @pytest.mark.integration
     def it_has_zsh_configured(devcontainer: DevContainer):
         """Verify that zsh is the default shell with oh-my-zsh."""
         result = devcontainer.exec("echo $SHELL", timeout=10)
@@ -80,7 +71,6 @@ def describe_container():
         result = devcontainer.exec("ls ~/.oh-my-zsh", timeout=10)
         assert result.returncode == 0, "oh-my-zsh not installed"
 
-    @pytest.mark.integration
     def it_has_working_dns(devcontainer: DevContainer):
         """Verify that DNS resolution works inside the container."""
         result = devcontainer.exec("dig +short github.com A", timeout=15)

@@ -1,0 +1,55 @@
+# lamp-the-djinn provider seam
+# One OpenAI-compatible endpoint (LiteLLM, :4000) fronting every backend.
+# The agent in the cage only ever sees this proxy; it holds no provider keys.
+
+model_list:
+  # --- Local: llama.cpp on tower (RTX 3090 Ti), reached over Tailscale ---
+  # HTTP only -- tower's tailscale serve has no HTTPS.
+  # NOTE: tower currently has a 3B model loaded. Fine for smoke-testing the
+  # wiring; load a real coder GGUF (e.g. Qwen2.5-Coder-32B at 4-bit fits 24GB)
+  # before using `local` for actual agent work.
+  - model_name: local
+    litellm_params:
+      model: openai/Llama-3.2-3B-Instruct-Q4_K_M
+      api_base: http://tower.tail790bbc.ts.net:8180/v1
+      api_key: "llamacpp-ignores-this"  # llama.cpp needs no auth; LiteLLM requires a value
+
+  # --- Qwen3.6-27B on tower: a real local coder, preferred over the 3B `local` ---
+  - model_name: qwen
+    litellm_params:
+      model: openai/Qwen3.6-27B-Q4_K_M
+      api_base: http://tower.tail790bbc.ts.net:8180/v1
+      api_key: "llamacpp-ignores-this"
+
+  # --- gemma-4-12B on tower (alternate local model) ---
+  - model_name: gemma
+    litellm_params:
+      model: openai/gemma-4-12B-it-Q8_0
+      api_base: http://tower.tail790bbc.ts.net:8180/v1
+      api_key: "llamacpp-ignores-this"
+
+  # --- GLM-5.2 via OpenRouter, preferring DeepInfra (fp4) ---
+  # allow_fallbacks: true keeps you resilient if DeepInfra is down -- OpenRouter
+  # picks another provider rather than failing. Set false to pin DeepInfra only.
+  - model_name: glm-5.2
+    litellm_params:
+      model: openrouter/z-ai/glm-5.2
+      api_key: os.environ/OPENROUTER_API_KEY
+      extra_body:
+        provider:
+          order: ["DeepInfra"]
+          allow_fallbacks: true
+
+litellm_settings:
+  num_retries: 2
+  request_timeout: 600
+  drop_params: true
+
+router_settings:
+  routing_strategy: simple-shuffle
+  # Optional resilience: auto-fail-over `local` -> `glm-5.2` if tower is unreachable.
+  # DISABLED by default on purpose: this would send prompts meant for your private
+  # box to a third party (OpenRouter/DeepInfra) the moment tower drops. It's also a
+  # capability cliff (3B -> frontier). Uncomment only for repos you're fine sending out.
+  # fallbacks:
+  #   - local: ["glm-5.2"]

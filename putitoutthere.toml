@@ -1,0 +1,19 @@
+[putitoutthere]
+version = 1
+
+# Single pure-Python package published to PyPI. No Rust/maturin: build = "hatch".
+# Version is sourced from git tags via hatch-vcs (see [tool.hatch.version] in
+# pyproject.toml); putitoutthere requires [project].dynamic = ["version"].
+[[package]]
+name = "lamp-the-djinn"
+kind = "pypi"
+pypi = "lamp-the-djinn"
+path = "."
+build = "hatch"
+first_version = "0.1.0"
+globs = [
+  "src/**",
+  "pyproject.toml",
+  "README.md",
+  "LICENSE",
+]

@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  release:
+    uses: thekevinscott/putitoutthere/.github/workflows/release.yml@v0
+    permissions:
+      contents: write
+      id-token: write
+
+  # PyPI upload runs in the caller's workflow context: PyPI Trusted Publishers
+  # can't validate OIDC tokens minted from a cross-repo reusable workflow.
+  # The `if:` gate skips this job when the release job published nothing.
+  pypi-publish:
+    needs: release
+    if: needs.release.outputs.has_pypi == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: '*-sdist'
+          path: dist/
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: '*-wheel-*'
+          path: dist/
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1

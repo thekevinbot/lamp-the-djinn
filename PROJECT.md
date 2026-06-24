@@ -1,11 +1,11 @@
-# ClankerCage Project Status
+# lamp-the-djinn Project Status
 
 A sandboxed devcontainer environment for running Claude Code with `--dangerously-skip-permissions`.
 
 ## What's Done
 
 ### Core Features
-- **Python CLI package** - installable via `uvx`, with `clankercage` and `clankercage-remote` entry points
+- **Python CLI package** - installable via `uvx`, with `lamp-the-djinn` and `lamp-the-djinn-remote` entry points
 - **Network firewall** - iptables-based allowlist blocking all outbound traffic except whitelisted domains
 - **SSH support** - `--ssh-key-file` flag mounts keys into container
 - **GPG signing** - `--gpg-key-id` flag for signed commits
@@ -25,7 +25,7 @@ A sandboxed devcontainer environment for running Claude Code with `--dangerously
 - [x] Linting workflow (ShellCheck passing)
 
 ### Testing
-- [x] SSH integration test using local SSH server via clankercage CLI
+- [x] SSH integration test using local SSH server via lamp-the-djinn CLI
 - [x] Firewall verification made non-fatal (warns instead of exits)
 - [x] Unit tests for SSH mount warning functionality (11 tests)
 
@@ -44,8 +44,8 @@ A sandboxed devcontainer environment for running Claude Code with `--dangerously
 - [ ] Document container reuse limitation in README
 
 ### GitHub Auth (Manual Steps)
-- [ ] Create PAT for clankerbot (scopes: repo, workflow, write:packages)
-- [ ] Run `gh auth login` with clankerbot token
+- [ ] Create PAT for thekevinbot (scopes: repo, workflow, write:packages)
+- [ ] Run `gh auth login` with thekevinbot token
 
 ### Blog Post (separate repo)
 - [ ] Add "Baked-In Tools" section: pnpm, uv, Playwright, Docker CLI
@@ -53,10 +53,10 @@ A sandboxed devcontainer environment for running Claude Code with `--dangerously
 ## Known Limitations
 
 ### Container Reuse Does NOT Update Mounts
-If you run clankercage without `--ssh-key-file` first, then add it later, the SSH key won't be mounted. Docker cannot add mounts to running containers.
+If you run lamp-the-djinn without `--ssh-key-file` first, then add it later, the SSH key won't be mounted. Docker cannot add mounts to running containers.
 
 **Workarounds:**
-1. Always set `CLANKERCAGE_SSH_KEY` env var from first run
+1. Always set `LTD_SSH_KEY` env var from first run
 2. Manually remove container if mount config needs to change:
    ```bash
    docker ps -a --filter "label=devcontainer.local_folder=/path/to/project" -q | xargs docker rm -f
@@ -65,32 +65,32 @@ If you run clankercage without `--ssh-key-file` first, then add it later, the SS
 ## CLI Usage
 
 ```bash
-# Local dev (in clankercage repo)
-uvx --from /path/to/clankercage clankercage \
-    --ssh-key-file ~/.ssh/id_ed25519_clanker \
-    --git-user-name clankerbot \
-    --git-user-email "248217931+clankerbot@users.noreply.github.com" \
+# Local dev (in lamp-the-djinn repo)
+uvx --from /path/to/lamp-the-djinn lamp-the-djinn \
+    --ssh-key-file ~/.ssh/id_ed25519_thekevinbot \
+    --git-user-name thekevinbot \
+    --git-user-email "thekevinbot@users.noreply.github.com" \
     --gpg-key-id C567F8478F289CC4
 
 # With local Dockerfile build
-uvx --from /path/to/clankercage clankercage --build ...
+uvx --from /path/to/lamp-the-djinn lamp-the-djinn --build ...
 
 # From GitHub
-uvx --from git+https://github.com/clankerbot/clankercage clankercage-remote ...
+uvx --from git+https://github.com/thekevinbot/lamp-the-djinn lamp-the-djinn-remote ...
 
 # Run a single command
-uv run clankercage --shell "ssh -T git@github.com"
+uv run lamp-the-djinn --shell "ssh -T git@github.com"
 ```
 
 ## CLI Arguments
 
 | Argument | Env Variable | Description |
 |----------|--------------|-------------|
-| `--ssh-key-file` | `CLANKERCAGE_SSH_KEY` | Path to SSH private key |
-| `--git-user-name` | `CLANKERCAGE_GIT_USER_NAME` | Git user.name |
-| `--git-user-email` | `CLANKERCAGE_GIT_USER_EMAIL` | Git user.email |
-| `--gh-token` | `CLANKERCAGE_GH_TOKEN` | GitHub token |
-| `--gpg-key-id` | `CLANKERCAGE_GPG_KEY_ID` | GPG key ID for signing |
+| `--ssh-key-file` | `LTD_SSH_KEY` | Path to SSH private key |
+| `--git-user-name` | `LTD_GIT_USER_NAME` | Git user.name |
+| `--git-user-email` | `LTD_GIT_USER_EMAIL` | Git user.email |
+| `--gh-token` | `LTD_GH_TOKEN` | GitHub token |
+| `--gpg-key-id` | `LTD_GPG_KEY_ID` | GPG key ID for signing |
 | `--build` | - | Build from local Dockerfile |
 | `--shell` | - | Run command instead of Claude Code |
 
@@ -98,7 +98,7 @@ uv run clankercage --shell "ssh -T git@github.com"
 
 | File | Purpose |
 |------|---------|
-| `src/clankercage/cli.py` | CLI entry points |
+| `src/lamp_the_djinn/cli.py` | CLI entry points |
 | `pyproject.toml` | Package config |
 | `.devcontainer/devcontainer.json` | Devcontainer config |
 | `.devcontainer/Dockerfile` | Container image |

@@ -1,0 +1,17 @@
+[Unit]
+Description=lamp-the-djinn: refresh the trusted read-only harness cache
+Documentation=https://github.com/thekevinbot/lamp-the-djinn
+# Refresh needs network to fetch packages from npm/PyPI.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Adjust the path if you cloned the repo elsewhere. %h is the user's home dir.
+# systemd does not expand ~, so use an absolute path or %h.
+ExecStart=%h/work/code/projects/lamp-the-djinn/scripts/refresh-harness-cache.sh
+# Cooldown window in days (defends against fresh-malicious releases).
+Environment=LTD_COOLDOWN_DAYS=3
+# Don't hang the boot/timer if a registry is slow.
+TimeoutStartSec=900
+Nice=10

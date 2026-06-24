@@ -8,31 +8,27 @@ These tests verify that:
 """
 
 import pytest
-
 from conftest import DevContainer
+
+pytestmark = pytest.mark.e2e
 
 
 def describe_gpg_signing():
     """Tests for GPG signing configuration."""
 
-    @pytest.mark.integration
     def test_gpg_signing_is_configured(devcontainer: DevContainer):
         """Verify that git is configured to use GPG signing."""
         # Check commit.gpgsign is true
         result = devcontainer.exec("git config --global commit.gpgsign", timeout=10)
         assert result.returncode == 0, f"commit.gpgsign not configured: {result.stderr}"
-        assert result.stdout.strip() == "true", (
-            f"Expected commit.gpgsign=true, got '{result.stdout.strip()}'"
-        )
+        assert result.stdout.strip() == "true", f"Expected commit.gpgsign=true, got '{result.stdout.strip()}'"
 
-    @pytest.mark.integration
     def test_gpg_signing_key_is_set(devcontainer: DevContainer):
         """Verify that a GPG signing key is configured in git."""
         result = devcontainer.exec("git config --global user.signingkey", timeout=10)
         assert result.returncode == 0, f"user.signingkey not configured: {result.stderr}"
         assert result.stdout.strip(), "No signing key configured"
 
-    @pytest.mark.integration
     def test_gpg_key_is_available(devcontainer: DevContainer):
         """Verify that a GPG secret key is available in the container."""
         result = devcontainer.exec(
@@ -42,7 +38,6 @@ def describe_gpg_signing():
         assert result.returncode == 0, f"No GPG secret keys found: {result.stderr}"
         assert "sec" in result.stdout, "No secret key available for signing"
 
-    @pytest.mark.integration
     def test_commits_are_signed(devcontainer: DevContainer):
         """Verify that commits made in the container are GPG signed."""
         # Create a test commit and verify it's signed
@@ -66,7 +61,6 @@ def describe_gpg_signing():
             f"Commit does not appear to be signed. Output: {output}"
         )
 
-    @pytest.mark.integration
     def test_gpg_tty_is_set(devcontainer: DevContainer):
         """Verify that GPG_TTY environment variable is set."""
         result = devcontainer.exec("echo $GPG_TTY", timeout=10)

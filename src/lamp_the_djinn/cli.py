@@ -246,6 +246,19 @@ def modify_config(
             f"source={allowed_domains},target=/usr/local/share/ltd-allowed-domains.txt,type=bind,readonly"
         )
 
+    # Per-run firewall allowlist supplement (--allow-domains-file / LTD_ALLOW_DOMAINS_FILE).
+    # Host-supplied, this cage only. Distinct target from the machine-local file
+    # above so both coexist; mounted READ-ONLY so the agent can read but not edit
+    # it (writing fails EROFS) -- the firewall reads it once at startup, before the
+    # agent runs, so the agent can never widen its own egress.
+    run_domains_file = getattr(args, "allow_domains_file", None)
+    if run_domains_file:
+        run_domains_path = Path(run_domains_file).expanduser().resolve()
+        config.setdefault("mounts", [])
+        config["mounts"].append(
+            f"source={run_domains_path},target=/usr/local/share/ltd-allowed-domains.run.txt,type=bind,readonly"
+        )
+
     # Harness package cache mount -- TRUST-gated so npx/uvx don't re-download the
     # harness every run. Two tiers:
     #
@@ -605,6 +618,13 @@ def create_parser() -> argparse.ArgumentParser:
         metavar="VAR=VALUE",
         help="Set environment variable (can be specified multiple times)",
     )
+    parser.add_argument(
+        "--allow-domains-file",
+        metavar="PATH",
+        help="Open extra egress domains for THIS cage only: a file with one domain "
+        "per line, mounted read-only so the agent cannot widen its own egress. "
+        "Env: LTD_ALLOW_DOMAINS_FILE",
+    )
     # The command to run inside the cage. REMAINDER captures everything after
     # ltd's own options verbatim, so the command's own flags (-p, -v, ...) are
     # NOT stolen by ltd's -p/-v/-e. Empty => default claude (see resolve_command).
@@ -637,6 +657,9 @@ def apply_env_defaults(args: argparse.Namespace) -> None:
     args.trusted = args.trusted or bool(os.environ.get("LTD_TRUSTED"))
     # Per-cage memory cap. Falls back to the 2g default inside modify_config.
     args.memory = args.memory or os.environ.get("LTD_MEMORY")
+    # Per-run egress allowlist file. Host-only (the agent can't set this), mounted
+    # read-only into the single cage this run launches.
+    args.allow_domains_file = args.allow_domains_file or os.environ.get("LTD_ALLOW_DOMAINS_FILE")
 
 
 def teardown_cage(id_label: str) -> None:

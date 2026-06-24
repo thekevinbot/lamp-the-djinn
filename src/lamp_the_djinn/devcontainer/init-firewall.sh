@@ -167,6 +167,41 @@ if [ -f "$SUPPLEMENT_FILE" ]; then
     done
 fi
 
+# Per-run allowlist supplement. `ltd --allow-domains-file` bind-mounts a
+# host-supplied domains file here (read-only) to open extra egress for THIS cage
+# only, without rebuilding the image or touching the machine-local file above.
+# Same parse + resolve; domains add to the same allowed-domains ipset.
+RUN_SUPPLEMENT_FILE="/usr/local/share/ltd-allowed-domains.run.txt"
+RUN_SUPPLEMENT_DOMAINS=()
+if [ -f "$RUN_SUPPLEMENT_FILE" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip empty lines and comments
+        [[ -z "$line" || "$line" =~ ^# ]] && continue
+        RUN_SUPPLEMENT_DOMAINS+=("$line")
+    done < "$RUN_SUPPLEMENT_FILE"
+    log "Loaded ${#RUN_SUPPLEMENT_DOMAINS[@]} per-run supplement domains from $RUN_SUPPLEMENT_FILE"
+    # audit_log only exists in the .devcontainer copy; guard so this block stays
+    # byte-identical to the embedded copy (which has no audit_log) under set -e.
+    command -v audit_log >/dev/null 2>&1 \
+        && audit_log "ALLOWLIST_ADD" "source=per-run-supplement domains=${#RUN_SUPPLEMENT_DOMAINS[@]}"
+
+    for domain in "${RUN_SUPPLEMENT_DOMAINS[@]}"; do
+        ips=$(dig +noall +answer +time=5 +tries=2 A "$domain" | awk '$4 == "A" {print $5}')
+        if [ -z "$ips" ]; then
+            echo "WARNING: Failed to resolve per-run supplement domain $domain (skipping)"
+            continue
+        fi
+        while read -r ip; do
+            if [[ ! "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+                echo "ERROR: Invalid IP from DNS for per-run supplement domain $domain: $ip"
+                exit 1
+            fi
+            log "Adding $ip for per-run supplement domain $domain"
+            ipset add allowed-domains "$ip" 2>/dev/null || true  # Ignore duplicates
+        done < <(echo "$ips")
+    done
+fi
+
 # Load user-approved domains from previous sessions
 ALLOWED_FILE="/home/node/.claude/.allowed-browser-domains"
 if [ -f "$ALLOWED_FILE" ]; then

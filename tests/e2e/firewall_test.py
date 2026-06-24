@@ -5,12 +5,40 @@ These tests verify that:
 - Blocked domains are actually blocked
 - Whitelisted domains are accessible
 - Dynamic domain approval works
+- A host-supplied --allow-domains-file opens extra egress for one cage, and the
+  agent cannot widen it from inside (the file is mounted read-only)
 """
+
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 from conftest import DevContainer
 
 pytestmark = pytest.mark.e2e
+
+
+def _ltd_binary() -> str | None:
+    """Resolve the DEPLOYED `ltd` console script (NOT the venv editable shadow).
+
+    Same rationale as tests/e2e/coding_agent_test.py: under `uv run pytest` the
+    editable install puts an `ltd` in `.venv/bin` that runs the live source, so
+    `shutil.which` would validate the source instead of the shipped artifact and
+    hide deploy skew. We resolve `ltd` on PATH excluding the active venv's bin,
+    honoring LTD_BIN for CI/local override.
+    """
+    override = os.environ.get("LTD_BIN")
+    if override:
+        return override
+
+    venv_bin = (Path(sys.prefix) / "bin").resolve()
+    search = os.pathsep.join(
+        p for p in os.environ.get("PATH", "").split(os.pathsep) if p and Path(p).resolve() != venv_bin
+    )
+    return shutil.which("ltd", path=search) or shutil.which("lamp-the-djinn", path=search)
 
 
 def describe_firewall():
@@ -95,3 +123,67 @@ def describe_firewall():
             timeout=10,
         )
         assert result.returncode == 0, "registry.npmjs.org should be in whitelist file"
+
+
+def describe_per_run_allow_domains_file():
+    """`ltd --allow-domains-file FILE` opens extra egress for ONE cage, read-only.
+
+    Drives the DEPLOYED `ltd` (not the bare devcontainer fixture), because the
+    behavior under test is ltd's own flag -> read-only mount -> firewall pickup.
+
+    Domain choice avoids IP collisions and the firewall's own self-test sentinels:
+      - httpbin.org  : the per-run-allowed domain. NOT in the baked-in whitelist
+                       and on AWS, so its IPs are distinct from example.com's.
+      - example.com  : the still-blocked sentinel. init-firewall asserts this is
+                       UNreachable during startup, so it stays a safe blocked probe.
+    """
+
+    def it_opens_a_listed_domain_keeps_others_blocked_and_stays_readonly(tmp_path: Path):
+        if shutil.which("docker") is None:
+            pytest.skip("docker not available")
+        ltd = _ltd_binary()
+        if ltd is None:
+            pytest.skip("ltd/lamp-the-djinn console script not installed on PATH (set LTD_BIN)")
+        print(f"\n[e2e] exercising deployed artifact: {ltd}")
+
+        run_file = tmp_path / "this-task-domains.txt"
+        run_file.write_text("httpbin.org\n")
+
+        # One probe, three facts, each emitting an unambiguous sentinel line:
+        #   - the listed domain is reachable (firewall picked up the run file)
+        #   - a non-listed domain is still blocked
+        #   - writing the mounted file from inside the cage is denied (EROFS)
+        target = "/usr/local/share/ltd-allowed-domains.run.txt"
+        probe = (
+            "set +e; "
+            "curl --connect-timeout 15 -s -o /dev/null https://httpbin.org/get "
+            "&& echo ALLOWED_OK || echo ALLOWED_FAIL; "
+            "curl --connect-timeout 5 -s -o /dev/null https://example.com "
+            "&& echo BLOCKED_LEAK || echo BLOCKED_OK; "
+            f"echo widen >> {target} 2>/tmp/werr "
+            "&& echo WRITE_LEAK || echo WRITE_DENIED; "
+            "cat /tmp/werr 2>/dev/null"
+        )
+
+        result = subprocess.run(
+            [ltd, "--allow-domains-file", str(run_file), "bash", "-c", probe],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+
+        combined = f"{result.stdout}\n{result.stderr}"
+        assert "ALLOWED_OK" in combined, (
+            f"listed domain httpbin.org was NOT reachable -- the run file didn't open egress.\n{combined}"
+        )
+        assert "BLOCKED_OK" in combined and "BLOCKED_LEAK" not in combined, (
+            f"a non-listed domain (example.com) was reachable -- the file widened egress too far.\n{combined}"
+        )
+        assert "WRITE_DENIED" in combined and "WRITE_LEAK" not in combined, (
+            f"the mounted domains file was WRITABLE from inside the cage -- the agent can widen its "
+            f"own egress.\n{combined}"
+        )
+        assert "Read-only file system" in combined or "Permission denied" in combined, (
+            f"expected an EROFS/permission error when writing the read-only mount.\n{combined}"
+        )

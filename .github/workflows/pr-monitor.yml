@@ -11,6 +11,4 @@ jobs:
     name: 'Check Commit Status'
     runs-on: ubuntu-latest
     steps:
-      - uses: clankerbot/pr-monitor@v1
-        with:
-          job-name: 'Check Commit Status'
+      - uses: thekevinscott/pr-monitor@v1

@@ -15,10 +15,12 @@
 coverage = { branch = true, fail_under = 50 }
 
 # The package's __init__.py is a version/docstring marker with no behavior to
-# unit-test. Everything else is explicit, reason-required (see Exemptions in the
-# testing-conventions README).
+# unit-test, so it's exempt from the colocated-test requirement (no sibling test
+# file needed). It is NOT coverage-exempt: a whole-file coverage exemption isn't
+# allowed (coverage/mutation exemptions must name exact lines), and __init__.py's
+# single `__version__` statement is covered by import anyway.
 # Path is relative to the scanned root (the `<path>` arg, e.g. `src/`).
 [[python.exempt]]
 path = "lamp_the_djinn/__init__.py"
-rules = ["colocated-test", "coverage"]
+rules = ["colocated-test"]
 reason = "package marker: module docstring + __version__, no logic to test"

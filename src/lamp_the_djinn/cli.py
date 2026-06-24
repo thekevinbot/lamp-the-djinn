@@ -342,7 +342,10 @@ def modify_config(
             # mount of a `$HOME` path lands where the cage never looks. This is the
             # same remap ltd already does by hand for ~/.claude, ~/.ssh, ~/.gnupg.
             # A path OUTSIDE HOME keeps path identity (`/mnt/x` -> `/mnt/x`) so the
-            # absolute paths an agent emits stay valid on the host.
+            # absolute paths an agent emits stay valid on the host. NOTE: Docker
+            # creates any absent parent dirs of a home-nested mount owned by ROOT;
+            # ltd re-owns them to the cage user from the host once the cage is up
+            # (see home_mount_parent_dirs / fix_mount_dir_ownership).
             if host_path == host_home or host_home in host_path.parents:
                 target = Path("/home/node") / host_path.relative_to(host_home)
             else:
@@ -395,6 +398,40 @@ def modify_config(
     config["postStartCommand"] = " && ".join(commands)
 
     return config
+
+
+def home_mount_parent_dirs(volumes: list[str] | None, host_home: Path) -> list[str]:
+    """Cage-side dirs Docker auto-creates (owned by ROOT) for home-nested mounts.
+
+    A bare `-v` under the host home is remapped to the same relative path under
+    the cage home (`~/.pi/agent/models.json` -> `/home/node/.pi/agent/...`; see
+    modify_config). Docker, mounting into a path whose parent dirs are absent
+    from the image, creates that whole parent chain owned by ROOT -- so the cage
+    user (`node`) cannot write siblings, and pi's first act,
+    `mkdir ~/.pi/agent/sessions/...`, dies with EACCES. ltd re-owns these
+    intermediate dirs to `node` from the host once the cage is up (see
+    fix_mount_dir_ownership); it never touches the mount target itself (the bind
+    point) nor the host file behind it.
+
+    Returns the sorted, de-duplicated cage-side dirs to re-own -- the parents of
+    each home-mapped mount target, from its containing dir up to (but excluding)
+    the cage home. Empty when nothing nests below the cage home. Explicit
+    `host:container` mounts are skipped: the user owns that layout.
+    """
+    cage_home = Path("/home/node")
+    dirs: set[str] = set()
+    for vol in volumes or []:
+        if ":" in vol:
+            continue
+        host_path = Path(vol).resolve()
+        if not (host_path == host_home or host_home in host_path.parents):
+            continue
+        target = cage_home / host_path.relative_to(host_home)
+        parent = target.parent
+        while parent != cage_home and cage_home in parent.parents:
+            dirs.add(str(parent))
+            parent = parent.parent
+    return sorted(dirs)
 
 
 def resolve_command(command: list[str], shell_cmd: str | None, safe_mode: bool) -> list[str]:
@@ -622,6 +659,41 @@ def teardown_cage(id_label: str) -> None:
         subprocess.run(["docker", "rm", "-f", *ids], capture_output=True, text=True)
 
 
+def fix_mount_dir_ownership(id_label: str, dirs: list[str], debug: bool = False) -> None:
+    """Re-own to the cage user the root-owned parent dirs Docker created for
+    home-nested bind mounts (see home_mount_parent_dirs).
+
+    Done from the HOST via the Docker daemon -- ltd already has Docker access --
+    NOT from inside the cage. That is the security-load-bearing choice: it keeps
+    the untrusted agent with NO standing root primitive. Putting a `sudo chown`
+    in the cage's postStartCommand instead would force `chown` onto the cage's
+    passwordless-sudo allowlist (today only init-firewall.sh / ipset), handing
+    the agent a general root-owns-anything escalation. Non-recursive on purpose:
+    it touches only the dirs themselves, never the bind-mounted file (chowning
+    that would change the HOST file's owner through the shared inode).
+
+    Best-effort: a teardown/run must not be aborted by a chown hiccup; surface
+    failures only in debug.
+    """
+    if not dirs:
+        return
+    found = subprocess.run(
+        ["docker", "ps", "-aq", "--filter", f"label={id_label}"],
+        capture_output=True,
+        text=True,
+    )
+    ids = found.stdout.split()
+    if not ids:
+        return
+    result = subprocess.run(
+        ["docker", "exec", "--user", "root", ids[0], "chown", "node:node", *dirs],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 and debug:
+        print(f"Could not re-own mount parent dirs {dirs}: {result.stderr.strip()}", file=sys.stderr)
+
+
 def run_devcontainer(
     config_path: Path,
     workspace_dir: Path,
@@ -630,6 +702,7 @@ def run_devcontainer(
     shell_cmd: str | None = None,
     safe_mode: bool = False,
     instance_id: str | None = None,
+    mount_parent_dirs: list[str] | None = None,
     debug: bool = False,
 ) -> None:
     """Run the devcontainer with the resolved command.
@@ -730,6 +803,12 @@ def run_devcontainer(
                 sys.stderr.write(up_out)
                 sys.stderr.write(up_err)
                 raise subprocess.CalledProcessError(child.returncode, up_cmd)
+
+        # The cage is up. Re-own (from the host, never via in-cage sudo) any
+        # root-owned parent dirs Docker created for home-nested mounts, so the
+        # harness can write next to a single-file mount -- e.g. pi's session dir
+        # beside a mounted models.json. See fix_mount_dir_ownership.
+        fix_mount_dir_ownership(id_label, mount_parent_dirs or [], debug)
 
         child = subprocess.Popen(exec_cmd)
         child.wait()
@@ -946,6 +1025,11 @@ def main() -> None:
     runtime_config = devcontainer_dir / "devcontainer.json"
     runtime_config.write_text(json.dumps(config, indent=2))
 
+    # Dirs Docker will create as ROOT for any home-nested `-v` mount; ltd re-owns
+    # them to the cage user once the cage is up so a single-file mount stays
+    # writable (e.g. pi's session dir beside models.json).
+    mount_parent_dirs = home_mount_parent_dirs(args.volume, Path.home().resolve())
+
     run_devcontainer(
         runtime_config,
         cache_dir,
@@ -954,6 +1038,7 @@ def main() -> None:
         args.shell,
         args.safe_mode,
         instance_id,
+        mount_parent_dirs=mount_parent_dirs,
         debug=args.debug,
     )
 

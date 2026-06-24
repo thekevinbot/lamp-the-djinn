@@ -38,19 +38,28 @@ backward-compatible: no proxy, just claude.
 
 Some harnesses ignore provider env vars and read their own config file instead —
 pi (`@earendil-works/pi-coding-agent`), for example, resolves providers only from
-`~/.pi/agent/models.json`. Bring that config into the cage by mounting it with
-`-v`, and quote the whole command as one string:
+`~/.pi/agent/models.json`. Mount just that file with `-v`, and quote the whole
+command as one string:
 
 ```bash
-ltd -v ~/.pi 'npx -y @earendil-works/pi-coding-agent'
+ltd -v ~/.pi/agent/models.json 'npx -y @earendil-works/pi-coding-agent'
 ```
 
-A `-v` path under your home maps to the **cage user's** home (`~/.pi` → the
-cage's `~/.pi`), because the cage runs as `node`, not as you — so a plain
-path-identity mount of a home path would land where the harness never looks. A
-`-v` path outside your home keeps its own path. Point pi's config at a `cage`
-provider whose `baseUrl` is `http://host.docker.internal:4000/v1` (the proxy as
-seen from inside the cage).
+Scope the mount to the single file the harness needs — not the whole `~/.pi`.
+That directory also holds `auth.json` (your pi credentials), and **everything
+mounted into the cage is readable by the untrusted agent**; mounting one file
+keeps the secret out.
+
+A `-v` path under your home maps to the **cage user's** home
+(`~/.pi/agent/models.json` → the same path under the cage's home), because the
+cage runs as `node`, not as you — so a plain path-identity mount of a home path
+would land where the harness never looks. When that mount is a single file, ltd
+also makes the parent directories Docker creates for it (here `~/.pi` and
+`~/.pi/agent`) owned by the cage user, so a harness that writes *next to* the
+file can do so — pi, for instance, creates its session dir at
+`~/.pi/agent/sessions/`. A `-v` path outside your home keeps its own path. Point
+pi's config at a `cage` provider whose `baseUrl` is
+`http://host.docker.internal:4000/v1` (the proxy as seen from inside the cage).
 
 ## Configuration
 

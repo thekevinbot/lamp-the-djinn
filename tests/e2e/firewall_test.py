@@ -10,11 +10,12 @@ These tests verify that:
 import pytest
 from conftest import DevContainer
 
+pytestmark = pytest.mark.e2e
+
 
 def describe_firewall():
     """Tests for the iptables/ipset firewall."""
 
-    @pytest.mark.integration
     def it_blocks_non_whitelisted_domains(devcontainer: DevContainer):
         """Verify that domains not in the whitelist are blocked."""
         # example.com is not in our whitelist
@@ -25,7 +26,6 @@ def describe_firewall():
         # Should fail - either connection refused or timeout
         assert result.returncode != 0, f"Expected blocked domain to fail, but curl succeeded: {result.stdout}"
 
-    @pytest.mark.integration
     def it_allows_whitelisted_domains(devcontainer: DevContainer):
         """Verify that whitelisted domains are accessible."""
         # api.github.com is in our whitelist
@@ -37,7 +37,6 @@ def describe_firewall():
         # GitHub zen endpoint returns a random quote
         assert len(result.stdout.strip()) > 0, "Expected non-empty response from GitHub"
 
-    @pytest.mark.integration
     def it_allows_dynamically_approved_domains(devcontainer: DevContainer):
         """Verify that domains can be added to the whitelist at runtime."""
         # First verify httpbin.org is blocked
@@ -69,7 +68,6 @@ def describe_firewall():
         if not initial_blocked:
             print("Note: httpbin.org was already accessible (may be in user's approved list)")
 
-    @pytest.mark.integration
     def it_rejects_invalid_domain_format(devcontainer: DevContainer):
         """Verify that invalid domain formats are rejected."""
         # Try to add an invalid domain
@@ -80,7 +78,6 @@ def describe_firewall():
         assert result.returncode != 0, "Should reject invalid domain format"
         assert "Invalid domain format" in result.stderr or "ERROR" in result.stderr
 
-    @pytest.mark.integration
     def it_loads_domains_from_whitelist_file(devcontainer: DevContainer):
         """Verify that the domains file is loaded correctly."""
         # Check that the domains file exists

@@ -5,6 +5,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import uuid
@@ -246,34 +247,22 @@ def modify_config(
         )
 
     # Harness package cache mount -- TRUST-gated so npx/uvx don't re-download the
-    # harness every run. Three tiers:
+    # harness every run. Two tiers:
     #
-    #   trusted          -> mount the host cache READ-WRITE. The first run populates
-    #                       it; later runs reuse it (no re-download). The agent is
-    #                       trusted, so a writable host cache is acceptable.
-    #   untrusted+warmed -> mount the cache READ-ONLY. It was pre-vetted by the
-    #                       trusted nightly refresh (scripts/refresh-harness-cache.sh),
-    #                       so the untrusted agent reads the cooldown copy but cannot
-    #                       write to it.
-    #   untrusted+cold   -> no cache mount and no cache env. Mounting an empty
-    #                       read-only cache and pointing npm/uv at it would break
-    #                       npx/uvx (they can't write their exec dirs), so the cage
-    #                       falls back to its own writable cache (re-downloads, but
-    #                       stays safe).
-    harness_cache = Path.home() / ".cache" / "lamp-the-djinn" / "harness-cache"
-    cache_warmed = harness_cache.is_dir() and any(harness_cache.iterdir())
+    #   trusted   -> mount the host cache READ-WRITE and point npm/uv at it. The
+    #                first run populates it; later runs reuse it (no re-download).
+    #                The agent is trusted, so a writable host cache is acceptable.
+    #   untrusted -> NO host cache mount and NO cache env. The cage uses its own
+    #                writable in-container cache (ephemeral, re-downloads each run,
+    #                but safe). We must NOT point npm/uv at a read-only host mount:
+    #                npm writes to _cacache/tmp even while fetching, so a read-only
+    #                cache fails hard with EROFS. (A read-only cooldown cache would
+    #                need an overlay/copy to be writable-on-top; deferred.)
     use_cache_env = False
     if trusted:
         config.setdefault("mounts", [])
         config["mounts"].append(
             "source=${localEnv:HOME}/.cache/lamp-the-djinn/harness-cache,target=/home/node/.cache/ltd-harness,type=bind"
-        )
-        use_cache_env = True
-    elif cache_warmed:
-        config.setdefault("mounts", [])
-        config["mounts"].append(
-            "source=${localEnv:HOME}/.cache/lamp-the-djinn/harness-cache,"
-            "target=/home/node/.cache/ltd-harness,type=bind,readonly"
         )
         use_cache_env = True
 
@@ -339,19 +328,34 @@ def modify_config(
                 port_mapping = f"{port_mapping}:{port_mapping}"
             config["runArgs"].extend(["-p", port_mapping])
     if args.volume:
+        host_home = Path.home().resolve()
         for vol in args.volume:
-            # Path identity: a bare path mounts at its own path inside the cage
-            # (`/mnt/x` -> `/mnt/x`), read-write and live. An explicit
-            # `host:container` mapping is honored as-is. Repeat -v for multiple dirs.
-            mapping = vol if ":" in vol else f"{Path(vol).resolve()}:{Path(vol).resolve()}"
-            config["runArgs"].extend(["-v", mapping])
+            # An explicit `host:container` mapping is honored as-is.
+            if ":" in vol:
+                config["runArgs"].extend(["-v", vol])
+                continue
+            host_path = Path(vol).resolve()
+            # A bare path UNDER the host HOME maps to the same relative location
+            # under the cage user's HOME (`~/.pi` -> `/home/node/.pi`), so tools
+            # that read HOME-relative config (pi's ~/.pi, npm's ~/.npmrc, ...) find
+            # it -- the cage user is `node`, not the host user, so a path-identity
+            # mount of a `$HOME` path lands where the cage never looks. This is the
+            # same remap ltd already does by hand for ~/.claude, ~/.ssh, ~/.gnupg.
+            # A path OUTSIDE HOME keeps path identity (`/mnt/x` -> `/mnt/x`) so the
+            # absolute paths an agent emits stay valid on the host.
+            if host_path == host_home or host_home in host_path.parents:
+                target = Path("/home/node") / host_path.relative_to(host_home)
+            else:
+                target = host_path
+            config["runArgs"].extend(["-v", f"{host_path}:{target}"])
     if args.env:
         for env_var in args.env:
             config["runArgs"].extend(["-e", env_var])
 
-    # Point the in-container npm/uv caches at the mounted harness cache whenever it
-    # is mounted (trusted, or untrusted+warmed). When it isn't, leave the cage's
-    # default writable caches so npx/uvx can fetch the harness fresh.
+    # Point the in-container npm/uv caches at the mounted harness cache only when
+    # it is mounted (trusted). Untrusted runs leave the cage's default writable
+    # caches so npx/uvx fetch the harness fresh -- pointing npm/uv at a read-only
+    # mount fails with EROFS (npm writes _cacache/tmp even while fetching).
     if use_cache_env:
         config["runArgs"].extend(["-e", "UV_CACHE_DIR=/home/node/.cache/ltd-harness/uv"])
         config["runArgs"].extend(["-e", "npm_config_cache=/home/node/.cache/ltd-harness/npm"])
@@ -400,8 +404,15 @@ def resolve_command(command: list[str], shell_cmd: str | None, safe_mode: bool) 
     preserves today's bare-`ltd` behavior: `claude --dangerously-skip-permissions`
     normally, or plain `claude` under --safe-mode (permission prompts on).
     `--shell CMD` is a convenience equal to `bash -c CMD`.
+
+    A single REMAINDER token that contains whitespace is the user quoting the
+    whole command as one string (`ltd 'npx -y pkg ...'`); we split it into argv so
+    `devcontainer exec` does not receive one impossible binary name with spaces.
+    Multi-token commands already arrived as argv and pass through verbatim.
     """
     if command:
+        if len(command) == 1 and any(ch.isspace() for ch in command[0]):
+            return shlex.split(command[0])
         return list(command)
     if shell_cmd:
         return ["bash", "-c", shell_cmd]
@@ -545,8 +556,10 @@ def create_parser() -> argparse.ArgumentParser:
         "--volume",
         action="append",
         metavar="DIR",
-        help="Mount a host dir into the cage at its OWN path (identity), e.g. "
-        "-v /mnt/bertha/app; or HOST:CONTAINER for an explicit target. Repeatable.",
+        help="Mount a host dir into the cage. A path under your home maps to the "
+        "cage user's home (~/.pi -> the cage's ~/.pi); a path elsewhere keeps its "
+        "OWN path (identity), e.g. -v /mnt/bertha/app; or HOST:CONTAINER for an "
+        "explicit target. Repeatable.",
     )
     parser.add_argument(
         "-e",
@@ -589,6 +602,26 @@ def apply_env_defaults(args: argparse.Namespace) -> None:
     args.memory = args.memory or os.environ.get("LTD_MEMORY")
 
 
+def teardown_cage(id_label: str) -> None:
+    """Force-remove the cage container(s) carrying this instance's label.
+
+    `devcontainer up` starts a PERSISTENT container; the agent runs inside it and
+    exits, but the container keeps running. Each ltd run uses a fresh instance id,
+    so the cage is never reused -- leaving it up just orphans one container per
+    run. There is no `devcontainer down` for a single instance, so we resolve the
+    labelled container id(s) and `docker rm -f` them. Best-effort and quiet: a
+    teardown failure must not mask the command's own exit code.
+    """
+    found = subprocess.run(
+        ["docker", "ps", "-aq", "--filter", f"label={id_label}"],
+        capture_output=True,
+        text=True,
+    )
+    ids = found.stdout.split()
+    if ids:
+        subprocess.run(["docker", "rm", "-f", *ids], capture_output=True, text=True)
+
+
 def run_devcontainer(
     config_path: Path,
     workspace_dir: Path,
@@ -626,28 +659,6 @@ def run_devcontainer(
         id_label,
     ]
 
-    if debug:
-        print(f"Starting devcontainer (instance {instance_id}, command: {' '.join(run_cmd)})...")
-        subprocess.run(up_cmd, check=True)
-    else:
-        # Quiet (default): hide the build/firewall/devcontainer noise so only the
-        # agent's own output reaches the terminal. Show a transient status while the
-        # cage comes up (a first build can be slow), then erase it so it doesn't
-        # linger above the agent's output. TTY only -- piped output stays clean.
-        # Surface the full output if the up fails.
-        is_tty = sys.stderr.isatty()
-        if is_tty:
-            sys.stderr.write("Starting cage...")
-            sys.stderr.flush()
-        result = subprocess.run(up_cmd, capture_output=True, text=True)
-        if is_tty:
-            sys.stderr.write("\r\033[K")  # carriage return + clear-to-end-of-line
-            sys.stderr.flush()
-        if result.returncode != 0:
-            sys.stderr.write(result.stdout)
-            sys.stderr.write(result.stderr)
-            raise subprocess.CalledProcessError(result.returncode, up_cmd)
-
     exec_cmd = (
         devcontainer_cmd
         + [
@@ -662,8 +673,75 @@ def run_devcontainer(
         + run_cmd
     )
 
-    # Use execvp to replace process for clean TTY passthrough
-    os.execvp("npx", exec_cmd)
+    # Run both `up` and the agent as CHILDREN (the agent inherits our stdio, so an
+    # interactive TUI gets clean TTY passthrough), then ALWAYS tear the cage down
+    # -- we cannot execvp here or no teardown code path would ever run and every
+    # cage would leak.
+    #
+    # A clean exit reaches the `finally`, but two ways out do NOT: SIGTERM (a
+    # `kill`) and SIGHUP (the user closes their terminal) terminate ltd outright,
+    # and a `finally` does not run when the default signal action fires -- and an
+    # interactive session is exactly when those arrive. So we install handlers
+    # that kill whatever child is live and tear the cage down ON the signal path
+    # before exiting. The signals can also land during `up` (the cage is created
+    # partway through it); if no handler were armed yet, ltd would die and the
+    # orphaned `up` would finish bringing the cage up -- a leak. So arm them
+    # BEFORE `up`, covering the whole lifecycle.
+    #
+    # SIGINT is different: a terminal Ctrl-C reaches the child's process group
+    # directly, so the agent handles it; ltd just ignores it and survives long
+    # enough to reach the normal teardown and propagate the child's exit code.
+    child: subprocess.Popen | None = None
+
+    def _on_terminating_signal(signum, _frame):
+        if child is not None and child.poll() is None:
+            child.terminate()
+        teardown_cage(id_label)
+        # We are on the signal path; skip the rest of the function and report the
+        # signal the way a shell would (128 + N).
+        os._exit(128 + signum)
+
+    previous_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    previous_sigterm = signal.signal(signal.SIGTERM, _on_terminating_signal)
+    previous_sighup = signal.signal(signal.SIGHUP, _on_terminating_signal)
+    try:
+        if debug:
+            print(f"Starting devcontainer (instance {instance_id}, command: {' '.join(run_cmd)})...")
+            child = subprocess.Popen(up_cmd)
+            child.wait()
+            if child.returncode != 0:
+                raise subprocess.CalledProcessError(child.returncode, up_cmd)
+        else:
+            # Quiet (default): hide the build/firewall/devcontainer noise so only
+            # the agent's own output reaches the terminal. Show a transient status
+            # while the cage comes up (a first build can be slow), then erase it so
+            # it doesn't linger above the agent's output. TTY only -- piped output
+            # stays clean. Surface the full output if the up fails.
+            is_tty = sys.stderr.isatty()
+            if is_tty:
+                sys.stderr.write("Starting cage...")
+                sys.stderr.flush()
+            child = subprocess.Popen(up_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            up_out, up_err = child.communicate()
+            if is_tty:
+                sys.stderr.write("\r\033[K")  # carriage return + clear-to-end-of-line
+                sys.stderr.flush()
+            if child.returncode != 0:
+                sys.stderr.write(up_out)
+                sys.stderr.write(up_err)
+                raise subprocess.CalledProcessError(child.returncode, up_cmd)
+
+        child = subprocess.Popen(exec_cmd)
+        child.wait()
+        rc = child.returncode
+    finally:
+        signal.signal(signal.SIGINT, previous_sigint)
+        signal.signal(signal.SIGTERM, previous_sigterm)
+        signal.signal(signal.SIGHUP, previous_sighup)
+        teardown_cage(id_label)
+
+    # A child killed by signal N reports -N; map it to the shell's 128+N.
+    sys.exit(rc if rc >= 0 else 128 - rc)
 
 
 IMAGE_NAME = "ghcr.io/thekevinbot/lamp-the-djinn:latest"

@@ -36,6 +36,22 @@ injects both provider env families (`OPENAI_*` and `ANTHROPIC_*`) so the agent
 finds whichever it speaks. Bare `ltd` with none of these stays fully
 backward-compatible: no proxy, just claude.
 
+Some harnesses ignore provider env vars and read their own config file instead —
+pi (`@earendil-works/pi-coding-agent`), for example, resolves providers only from
+`~/.pi/agent/models.json`. Bring that config into the cage by mounting it with
+`-v`, and quote the whole command as one string:
+
+```bash
+ltd -v ~/.pi 'npx -y @earendil-works/pi-coding-agent'
+```
+
+A `-v` path under your home maps to the **cage user's** home (`~/.pi` → the
+cage's `~/.pi`), because the cage runs as `node`, not as you — so a plain
+path-identity mount of a home path would land where the harness never looks. A
+`-v` path outside your home keeps its own path. Point pi's config at a `cage`
+provider whose `baseUrl` is `http://host.docker.internal:4000/v1` (the proxy as
+seen from inside the cage).
+
 ## Configuration
 
 For a dedicated GitHub identity (recommended for distinguishing AI commits from your own):

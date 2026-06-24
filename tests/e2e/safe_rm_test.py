@@ -10,11 +10,12 @@ These tests verify that:
 import pytest
 from conftest import DevContainer
 
+pytestmark = pytest.mark.e2e
+
 
 def describe_safe_rm():
     """Tests for the safe-rm deletion wrapper."""
 
-    @pytest.mark.integration
     def it_blocks_deletion_with_uncommitted_changes(devcontainer: DevContainer):
         """Verify that safe-rm refuses to delete files when there are uncommitted changes."""
         # Create a git repo with uncommitted changes
@@ -41,7 +42,6 @@ def describe_safe_rm():
             f"Expected error message about uncommitted changes: {result.stdout}"
         )
 
-    @pytest.mark.integration
     def it_allows_deletion_with_clean_git_state(devcontainer: DevContainer):
         """Verify that safe-rm allows deletion when all changes are committed."""
         result = devcontainer.exec(
@@ -66,7 +66,6 @@ def describe_safe_rm():
         assert "exit_code=0" in result.stdout, f"Expected safe-rm to succeed with clean state: {result.stdout}"
         assert "file_deleted=true" in result.stdout, f"File should have been deleted: {result.stdout}"
 
-    @pytest.mark.integration
     def it_works_outside_git_repos(devcontainer: DevContainer):
         """Verify that safe-rm works normally outside of git repositories."""
         result = devcontainer.exec(
@@ -84,7 +83,6 @@ def describe_safe_rm():
         assert "exit_code=0" in result.stdout, f"Expected safe-rm to succeed outside git repo: {result.stdout}"
         assert "file_deleted=true" in result.stdout, f"File should have been deleted: {result.stdout}"
 
-    @pytest.mark.integration
     def it_passes_through_rm_options(devcontainer: DevContainer):
         """Verify that safe-rm passes options through to rm."""
         result = devcontainer.exec(

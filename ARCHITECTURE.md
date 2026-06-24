@@ -37,15 +37,24 @@ only ever sees a base URL, a key, and a model name.
 ## Harness model
 
 A harness is the agent program run inside the cage (Claude Code, Codex, Aider,
-or a raw command). Harnesses are fetched with `npx`/`uvx` at runtime. To keep
-that fetch from being an egress hole:
+or a raw command). Harnesses are fetched with `npx`/`uvx` at runtime. The
+harness cache is **trust-gated**, because pointing a package manager at a
+read-only mount fails: npm writes `_cacache/tmp` even while merely fetching
+metadata, so a read-only cache dies with `EROFS` on the first fetch.
 
 - A **trusted nightly refresh** runs on the *host*
   (`scripts/refresh-harness-cache.sh`) and pre-fetches packages into
   `~/.cache/lamp-the-djinn/harness-cache` with a cooldown window.
-- The cage mounts that cache **read-only**; in-container `UV_CACHE_DIR` and
-  `npm_config_cache` point at it. The agent uses pre-vetted packages instead of
-  downloading fresh ones.
+- **Trusted runs** (`--trusted`) mount that cache **read-write** and point
+  in-container `UV_CACHE_DIR` / `npm_config_cache` at it, so repeated runs reuse
+  pre-vetted packages instead of re-downloading.
+- **Untrusted runs** (the default) mount **no** host cache and set **no** cache
+  env: the cage uses its own writable, ephemeral in-container cache. It
+  re-fetches each run, but never writes to a host path and never `EROFS`es.
+
+The regression test for this lives in `tests/e2e/coding_agent_test.py` (the
+deployed-artifact reproduction) and `tests/integration/harness_cache_test.py`
+(the deterministic config decision).
 
 ## Load-bearing controls
 

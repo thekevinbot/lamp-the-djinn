@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.e2e
+
 
 def describe_playwright_fallback():
     """Integration tests for Playwright fallback hook"""
@@ -23,7 +25,6 @@ def describe_playwright_fallback():
     def describe_when_webfetch_fails():
         """When WebFetch encounters a blocked site"""
 
-        @pytest.mark.integration
         def it_should_trigger_playwright_fallback_and_succeed():
             """Should automatically fall back to Playwright and retrieve content"""
 
@@ -36,6 +37,12 @@ def describe_playwright_fallback():
 
             claude_dir = Path.home() / ".claude" / ".devcontainer"
             config = claude_dir / "devcontainer.json"
+
+            # This test depends on the user's base claude devcontainer config,
+            # which is optional and absent on most hosts/CI. A missing base env
+            # is "not applicable here" (skip), not a failure.
+            if not config.exists():
+                pytest.skip(f"base devcontainer config not present: {config}")
 
             print("\n" + "=" * 60)
             print("Testing Playwright Fallback Integration...")

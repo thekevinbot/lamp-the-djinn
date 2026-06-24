@@ -1,83 +1,19 @@
 """
-Tests for the lamp-the-djinn CLI.
+End-to-end tests for the lamp-the-djinn CLI.
 
-These tests verify that:
-- The CLI correctly mounts local directories
-- The --shell flag works for non-interactive testing
+These spin up a real cage via the actual `ltd`/`lamp-the-djinn` CLI (`uv run
+lamp-the-djinn --shell ...`) and assert on real container behavior: workspace
+mounting (path identity), installed tooling, SSH, and claude flag pass-through.
+Slow; requires Docker.
 """
 
 import subprocess
 import uuid
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
-from lamp_the_djinn.cli import get_container_info
-
-
-def describe_get_container_info():
-    """Unit tests for get_container_info function."""
-
-    def it_parses_ghcr_image_labels():
-        """Test parsing labels from a ghcr.io built image."""
-        mock_result = mock.Mock()
-        mock_result.returncode = 0
-        mock_result.stdout = "2025-01-15T10:30:00Z|ghcr.io"
-
-        with mock.patch("subprocess.run", return_value=mock_result):
-            info = get_container_info("ghcr.io/test/image:latest")
-
-        assert info["build_time"] == "2025-01-15T10:30:00Z"
-        assert info["source"] == "ghcr.io"
-
-    def it_parses_local_image_labels():
-        """Test parsing labels from a locally built image."""
-        mock_result = mock.Mock()
-        mock_result.returncode = 0
-        mock_result.stdout = "2025-01-15T10:30:00Z|local"
-
-        with mock.patch("subprocess.run", return_value=mock_result):
-            info = get_container_info("my-local-image:latest")
-
-        assert info["build_time"] == "2025-01-15T10:30:00Z"
-        assert info["source"] == "local"
-
-    def it_handles_missing_labels():
-        """Test handling images without labels."""
-        mock_result = mock.Mock()
-        mock_result.returncode = 0
-        mock_result.stdout = "|"
-
-        with mock.patch("subprocess.run", return_value=mock_result):
-            info = get_container_info("image-without-labels:latest")
-
-        assert info["build_time"] == "unknown"
-        assert info["source"] == "local"
-
-    def it_handles_docker_inspect_failure():
-        """Test handling when docker inspect fails."""
-        mock_result = mock.Mock()
-        mock_result.returncode = 1
-        mock_result.stdout = ""
-
-        with mock.patch("subprocess.run", return_value=mock_result):
-            info = get_container_info("nonexistent:latest")
-
-        assert info["build_time"] == "unknown"
-        assert info["source"] == "unknown"
-
-    def it_handles_partial_labels():
-        """Test handling when only build_time label exists."""
-        mock_result = mock.Mock()
-        mock_result.returncode = 0
-        mock_result.stdout = "2025-01-15T10:30:00Z|"
-
-        with mock.patch("subprocess.run", return_value=mock_result):
-            info = get_container_info("partial-labels:latest")
-
-        assert info["build_time"] == "2025-01-15T10:30:00Z"
-        assert info["source"] == "local"
+pytestmark = pytest.mark.e2e
 
 
 @pytest.fixture
@@ -120,7 +56,6 @@ def run_clanker(
 def describe_workspace_mounting():
     """Tests for workspace directory mounting."""
 
-    @pytest.mark.integration
     def it_mounts_local_directory_at_its_own_path(workspace_path: Path):
         """The local dir mounts at its OWN host path inside the cage (path identity)."""
         # Create a unique file in the temp directory
@@ -135,7 +70,6 @@ def describe_workspace_mounting():
         assert result.returncode == 0, f"Command failed: {result.stderr}"
         assert marker in result.stdout, f"Expected marker '{marker}' not found in output: {result.stdout}"
 
-    @pytest.mark.integration
     def it_can_write_files_back_to_host(workspace_path: Path):
         """Verify that files written in /workspace appear on the host."""
         marker = f"written-from-container-{uuid.uuid4()}"
@@ -154,7 +88,6 @@ def describe_workspace_mounting():
         assert host_file.exists(), f"File not created on host: {host_file}"
         assert marker in host_file.read_text(), f"Expected marker not in file contents: {host_file.read_text()}"
 
-    @pytest.mark.integration
     def it_preserves_file_permissions(workspace_path: Path):
         """Verify that file permissions are preserved through the mount."""
         script = workspace_path / "test-script.sh"
@@ -167,7 +100,6 @@ def describe_workspace_mounting():
         assert result.returncode == 0, f"Command failed: {result.stderr}"
         assert "executable" in result.stdout, f"File not executable in container: {result.stdout}"
 
-    @pytest.mark.integration
     def it_shows_correct_working_directory(workspace_path: Path):
         """pwd shows the real host path (path identity), not /workspace."""
         result = run_clanker(workspace_path, "pwd")
@@ -179,7 +111,6 @@ def describe_workspace_mounting():
 def describe_installed_tools():
     """Tests for tools that should be available in the container."""
 
-    @pytest.mark.integration
     def it_has_uv_available(workspace_path: Path):
         """Verify uv is installed."""
         result = run_clanker(workspace_path, "uv --version")
@@ -187,28 +118,24 @@ def describe_installed_tools():
         assert result.returncode == 0, f"uv not available: {result.stderr}"
         assert "uv" in result.stdout, f"Unexpected uv output: {result.stdout}"
 
-    @pytest.mark.integration
     def it_has_uvx_available(workspace_path: Path):
         """Verify uvx is installed."""
         result = run_clanker(workspace_path, "uvx --version")
 
         assert result.returncode == 0, f"uvx not available: {result.stderr}"
 
-    @pytest.mark.integration
     def it_has_npm_available(workspace_path: Path):
         """Verify npm is installed."""
         result = run_clanker(workspace_path, "npm --version")
 
         assert result.returncode == 0, f"npm not available: {result.stderr}"
 
-    @pytest.mark.integration
     def it_has_pnpm_available(workspace_path: Path):
         """Verify pnpm is installed."""
         result = run_clanker(workspace_path, "pnpm --version")
 
         assert result.returncode == 0, f"pnpm not available: {result.stderr}"
 
-    @pytest.mark.integration
     def it_has_playwright_available(workspace_path: Path):
         """Verify playwright is installed and browsers are available."""
         result = run_clanker(workspace_path, "npx playwright --version")
@@ -216,7 +143,6 @@ def describe_installed_tools():
         assert result.returncode == 0, f"Playwright not available: {result.stderr}"
         assert "Version" in result.stdout or result.stdout.strip(), f"Unexpected playwright output: {result.stdout}"
 
-    @pytest.mark.integration
     def it_can_run_playwright_chromium(workspace_path: Path):
         """Verify playwright can launch chromium browser."""
         # Make workspace writable for screenshot output
@@ -307,7 +233,6 @@ def ssh_server(tmp_path_factory):
 def describe_ssh():
     """SSH test using a local SSH server that mimics GitHub's behavior."""
 
-    @pytest.mark.integration
     @pytest.mark.skip(reason="SSH config bind mount has permission issues in CI - needs container-native solution")
     def it_can_ssh_to_server_via_clanker(workspace_path: Path, ssh_server):
         """Test SSH via lamp-the-djinn CLI - mirrors: uv run lamp-the-djinn --ssh-key-file KEY --shell 'ssh -T git@server'.
@@ -377,7 +302,6 @@ def run_claude(
 def describe_claude_flag_passthrough():
     """Tests for passing arbitrary flags to claude."""
 
-    @pytest.mark.integration
     @pytest.mark.claude
     @pytest.mark.skip(reason="Requires Claude API key and writable .claude directory - run manually")
     def it_passes_continue_flag_to_claude(workspace_path: Path):

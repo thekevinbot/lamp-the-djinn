@@ -1,0 +1,24 @@
+# testing-conventions config -- the deterministic gate behind AGENTS.md's
+# red-first discipline. See https://thekevinscott.github.io/testing-conventions/
+#
+# Run locally with `uvx testing-conventions <rule> --language python <path>`;
+# CI runs the full set via .github/workflows/conventions.yml.
+
+[python]
+# Coverage is measured on the UNIT suite only (colocated src/**/*_test.py).
+# cli.py mixes unit-tested pure logic (modify_config, resolve_command,
+# detect_runtime, record_manifest) with subprocess/execvp orchestration that
+# only the e2e tier exercises, so a 100% whole-tree floor would false-red on
+# code that is genuinely covered by e2e. The floor is set as a ratchet below the
+# current number (54%); the per-PR signal that new code is tested comes from
+# `unit coverage --base` (diff-scoped) in CI, not this whole-tree floor.
+coverage = { branch = true, fail_under = 50 }
+
+# The package's __init__.py is a version/docstring marker with no behavior to
+# unit-test. Everything else is explicit, reason-required (see Exemptions in the
+# testing-conventions README).
+# Path is relative to the scanned root (the `<path>` arg, e.g. `src/`).
+[[python.exempt]]
+path = "lamp_the_djinn/__init__.py"
+rules = ["colocated-test", "coverage"]
+reason = "package marker: module docstring + __version__, no logic to test"

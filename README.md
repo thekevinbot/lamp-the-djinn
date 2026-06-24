@@ -74,6 +74,29 @@ uvx --from git+https://github.com/thekevinbot/lamp-the-djinn lamp-the-djinn \
   --gh-token ghp_your_github_token
 ```
 
+## Allowlisting extra egress domains
+
+The cage ships a baked-in domain allowlist (npm, PyPI, GitHub, …); everything
+else is blocked by default-deny egress. Two host-side ways to open more domains
+without rebuilding the image:
+
+- **Machine-local, all cages**: drop one domain per line in
+  `~/.config/lamp-the-djinn/allowed-domains.txt`. ltd mounts it read-only into
+  every cage and the firewall resolves it at startup. Use this for domains you
+  always want reachable on this machine.
+- **Per-run, this cage only**: pass `--allow-domains-file PATH` (or set
+  `LTD_ALLOW_DOMAINS_FILE`). ltd mounts that file read-only into the single cage
+  it launches, so only that run gets the extra domains.
+
+```bash
+ltd --allow-domains-file ./this-task-domains.txt 'claude -p "fetch the docs"'
+```
+
+Both files are mounted **read-only**: the firewall reads them once at startup,
+before the agent runs, and the agent cannot edit them from inside the cage (the
+mount is `EROFS`) — so the agent can never widen its own egress. A domain not in
+the baked-in list, the machine-local file, or the per-run file stays blocked.
+
 ## How It Works
 
 Two swappable seams (see [ARCHITECTURE.md](ARCHITECTURE.md) for the full design):

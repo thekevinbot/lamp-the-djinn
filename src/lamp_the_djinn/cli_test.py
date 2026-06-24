@@ -132,6 +132,7 @@ def _bare_args(**overrides) -> argparse.Namespace:
         port=None,
         volume=None,
         env=None,
+        allow_domains_file=None,
         trusted=False,
         memory=None,
     )
@@ -677,6 +678,52 @@ def describe_allowlist_supplement_mount():
             )
 
         assert not any("ltd-allowed-domains.txt" in m for m in _mounts(config))
+
+
+def describe_allow_domains_file_mount():
+    """--allow-domains-file mounts a per-run domains file read-only into the cage."""
+
+    def it_mounts_the_run_file_when_flag_set(tmp_path: Path):
+        home = tmp_path / "home"
+        home.mkdir()
+        run_file = tmp_path / "this-task-domains.txt"
+        run_file.write_text("example.internal\n")
+
+        with mock.patch("pathlib.Path.home", return_value=home):
+            config = modify_config(
+                {"mounts": [], "runArgs": []},
+                _bare_args(allow_domains_file=str(run_file)),
+                tmp_path,
+                trusted=False,
+                claude_stage_dir=tmp_path / "stage",
+            )
+
+        mount = next(m for m in _mounts(config) if "ltd-allowed-domains.run.txt" in m)
+        assert f"source={run_file}" in mount
+        assert "target=/usr/local/share/ltd-allowed-domains.run.txt" in mount
+        assert "readonly" in mount
+
+    def it_omits_the_run_mount_when_flag_absent(tmp_path: Path):
+        home = tmp_path / "home"
+        home.mkdir()
+
+        with mock.patch("pathlib.Path.home", return_value=home):
+            config = modify_config(
+                {"mounts": [], "runArgs": []},
+                _bare_args(),
+                tmp_path,
+                trusted=False,
+                claude_stage_dir=tmp_path / "stage",
+            )
+
+        assert not any("ltd-allowed-domains.run.txt" in m for m in _mounts(config))
+
+    def it_reads_allow_domains_file_from_env():
+        parser = create_parser()
+        args = parser.parse_args([])
+        with mock.patch.dict("os.environ", {"LTD_ALLOW_DOMAINS_FILE": "/some/path.txt"}, clear=False):
+            apply_env_defaults(args)
+        assert args.allow_domains_file == "/some/path.txt"
 
 
 def describe_trusted_flag_and_env():
